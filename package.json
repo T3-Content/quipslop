@@ -8,7 +8,10 @@
     "start:cli": "bun quipslop.tsx",
     "start:web": "bun --hot server.ts",
     "start:stream": "bun ./scripts/stream-browser.ts live",
-    "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun"
+    "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun",
+    "quipbench:run": "bun bench/run.ts",
+    "quipbench:export": "bun bench/export.ts",
+    "quipbench:open": "bun bench/open.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -24,6 +27,7 @@
     "ink": "^6.8.0",
     "puppeteer": "^24.2.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
   }
 }

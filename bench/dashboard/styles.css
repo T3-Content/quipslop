@@ -1,0 +1,251 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #050505;
+  --surface: #0a0a0a;
+  --surface-2: #111111;
+  --border: #212121;
+  --border-light: #2d2d2d;
+  --text: #ededed;
+  --text-dim: #a2a2a2;
+  --text-muted: #6a6a6a;
+  --accent: #d97757;
+  --mono: "JetBrains Mono", "SF Mono", monospace;
+  --sans: "Inter", -apple-system, sans-serif;
+  --serif: "DM Serif Display", Georgia, serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand img {
+  width: 28px;
+  height: 28px;
+}
+
+.brand h1 {
+  font-family: var(--serif);
+  font-size: clamp(26px, 3.5vw, 36px);
+  letter-spacing: -0.4px;
+}
+
+.header-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-links a {
+  color: var(--text-dim);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-links a:hover {
+  color: var(--text);
+  border-color: var(--border-light);
+}
+
+.header-links a svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+.meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.panel--summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-block {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.summary-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.summary-value {
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-head {
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-head h2 {
+  font-size: 18px;
+  letter-spacing: -0.2px;
+}
+
+.panel-head p {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chart-shell {
+  height: min(46vw, 420px);
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(to bottom, #121212, #0d0d0d);
+  padding: 12px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 680px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.model-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-cell img {
+  width: 16px;
+  height: 16px;
+}
+
+.rank {
+  color: var(--text-dim);
+  width: 36px;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.empty {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: var(--surface-2);
+}
+
+@media (max-width: 900px) {
+  .panel--summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .shell {
+    padding: 22px 12px 40px;
+  }
+
+  .panel--summary {
+    grid-template-columns: 1fr;
+  }
+}
