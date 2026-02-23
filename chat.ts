@@ -78,6 +78,7 @@ export function setCurrentRound(roundNum: number | null) {
 }
 
 export function getRecentMessages(limit = 50): ChatMessage[] {
+  if (limit <= 0) return [];
   return recentMessages.slice(-limit);
 }
 
@@ -200,7 +201,8 @@ export function getAudienceVotes(): { a: number; b: number; total: number } {
   };
 }
 
-// Accepts: "A", "a", "1", "A!", "vote A", "a lol" — first char wins
+// Accepts: "A", "a", "1", "A!", "a lol" — first non-punctuation char wins
+// Note: "vote A" won't match because 'v' is alphanumeric
 function processVote(username: string, content: string) {
   if (!votingOpen) return;
   if (audienceVotes.voters.has(username)) return; // one vote per person
@@ -223,9 +225,9 @@ onChatMessage((msg) => processVote(msg.username, msg.content));
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-export function stopChat() {
+export async function stopChat() {
   if (client) {
-    client.disconnect().catch(() => {});
+    await client.disconnect().catch(() => {});
     client = null;
   }
 }

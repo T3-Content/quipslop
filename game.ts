@@ -192,8 +192,8 @@ import {
 } from "./chat.ts";
 
 // Humor reaction patterns — when chat uses these, the previous answer landed well
-const HYPE_PATTERNS = /\b(lmao|lol|dead|omg|bruh|no way|im crying|help|based|goated)\b|[💀😂🤣]/i;
-const CRINGE_PATTERNS = /\b(mid|boring|cringe|meh|yawn|weak|trash)\b|[😴👎]/i;
+const HYPE_PATTERNS = /\b(lmao|lol|dead|omg|bruh|no way|im crying|help|based|goated)\b|[💀😂🤣]/iu;
+const CRINGE_PATTERNS = /\b(mid|boring|cringe|meh|yawn|weak|trash)\b|[😴👎]/iu;
 
 function analyzeAudienceReactions(messages: ReturnType<typeof getRecentMessages>): string {
   let hype = 0;

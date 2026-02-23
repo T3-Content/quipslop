@@ -51,7 +51,13 @@ const FLUSH_INTERVAL_MS = 5_000;
 function flush() {
   if (pendingMessages.length === 0) return;
   const batch = pendingMessages.splice(0);
-  insertBatch(batch);
+  try {
+    insertBatch(batch);
+  } catch (err) {
+    pendingMessages.unshift(...batch);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[chat-store] flush failed, ${batch.length} messages re-queued: ${detail}`);
+  }
 }
 
 export function queueMessage(message: ChatMessage) {
@@ -62,6 +68,7 @@ export function queueMessage(message: ChatMessage) {
 }
 
 export function startPersistence() {
+  if (flushTimer) clearInterval(flushTimer);
   flushTimer = setInterval(flush, FLUSH_INTERVAL_MS);
 }
 
