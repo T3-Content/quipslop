@@ -61,7 +61,7 @@ const gameState: GameState = {
 
 // ── Guardrails ──────────────────────────────────────────────────────────────
 
-type WsData = { ip: string };
+type WsData = { ip: string; counted: boolean };
 
 const WINDOW_MS = 60_000;
 const HISTORY_LIMIT_PER_MIN = parsePositiveInt(
@@ -112,6 +112,10 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizeSocketIp(ip: string): string {
+  return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+}
+
 function isPrivateIp(ip: string): boolean {
   const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
   if (v4 === "127.0.0.1" || ip === "::1") return true;
@@ -141,12 +145,12 @@ function getClientIp(req: Request, server: Bun.Server<WsData>): string {
     if (xff) {
       const rightmost = xff.split(",").at(-1)?.trim();
       if (rightmost && !isPrivateIp(rightmost)) {
-        return rightmost.startsWith("::ffff:") ? rightmost.slice(7) : rightmost;
+        return normalizeSocketIp(rightmost);
       }
     }
   }
 
-  return socketIp.startsWith("::ffff:") ? socketIp.slice(7) : socketIp;
+  return normalizeSocketIp(socketIp);
 }
 
 function isRateLimited(key: string, limit: number, windowMs: number): boolean {
@@ -753,17 +757,7 @@ const server = Bun.serve<WsData>({
         });
         return new Response("Service Unavailable", { status: 503 });
       }
-      const existingForIp = wsByIp.get(ip) ?? 0;
-      if (existingForIp >= MAX_WS_PER_IP) {
-        log("WARN", "ws", "Per-IP WS limit reached, rejecting", {
-          ip,
-          existing: existingForIp,
-          limit: MAX_WS_PER_IP,
-        });
-        return new Response("Too Many Requests", { status: 429 });
-      }
-
-      const upgraded = server.upgrade(req, { data: { ip } });
+      const upgraded = server.upgrade(req, { data: { ip, counted: false } });
       if (!upgraded) {
         log("WARN", "ws", "WebSocket upgrade failed", { ip });
         return new Response("WebSocket upgrade failed", { status: 400 });
@@ -777,8 +771,22 @@ const server = Bun.serve<WsData>({
   websocket: {
     data: {} as WsData,
     open(ws) {
+      ws.data.ip = normalizeSocketIp(ws.remoteAddress);
+
+      const existingForIp = wsByIp.get(ws.data.ip) ?? 0;
+      if (existingForIp >= MAX_WS_PER_IP) {
+        log("WARN", "ws", "Per-IP WS limit reached, closing", {
+          ip: ws.data.ip,
+          existing: existingForIp,
+          limit: MAX_WS_PER_IP,
+        });
+        ws.close(1013, "Too Many Connections");
+        return;
+      }
+
       clients.add(ws);
-      const ipCount = (wsByIp.get(ws.data.ip) ?? 0) + 1;
+      ws.data.counted = true;
+      const ipCount = existingForIp + 1;
       wsByIp.set(ws.data.ip, ipCount);
       log("INFO", "ws", "Client connected", {
         ip: ws.data.ip,
@@ -799,10 +807,13 @@ const server = Bun.serve<WsData>({
       // Notify everyone else with just the viewer count
       broadcastViewerCount();
     },
-    message() {
+    message(ws) {
+      if (!ws.data.counted) return;
       // Viewer voting moved to Twitch chat via Fossabot.
     },
     close(ws) {
+      if (!ws.data.counted) return;
+      ws.data.counted = false;
       clients.delete(ws);
       decrementIpConnection(ws.data.ip);
       log("INFO", "ws", "Client disconnected", {
