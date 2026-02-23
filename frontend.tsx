@@ -112,6 +112,8 @@ function ModelTag({ model, small }: { model: Model; small?: boolean }) {
 // ── Prompt ───────────────────────────────────────────────────────────────────
 
 function PromptCard({ round }: { round: RoundState }) {
+  const color = getColor(round.prompter.name);
+
   if (round.phase === "prompting" && !round.prompt) {
     return (
       <div className="prompt">
@@ -119,7 +121,10 @@ function PromptCard({ round }: { round: RoundState }) {
           <ModelTag model={round.prompter} small /> is writing a prompt
           <Dots />
         </div>
-        <div className="prompt__text prompt__text--loading">
+        <div
+          className="prompt__text prompt__text--loading"
+          style={{ "--accent": color } as React.CSSProperties}
+        >
           <Dots />
         </div>
       </div>
@@ -129,7 +134,10 @@ function PromptCard({ round }: { round: RoundState }) {
   if (round.promptTask.error) {
     return (
       <div className="prompt">
-        <div className="prompt__text prompt__text--error">
+        <div
+          className="prompt__text prompt__text--error"
+          style={{ "--accent": color } as React.CSSProperties}
+        >
           Prompt generation failed
         </div>
       </div>
@@ -141,7 +149,12 @@ function PromptCard({ round }: { round: RoundState }) {
       <div className="prompt__by">
         Prompted by <ModelTag model={round.prompter} small />
       </div>
-      <div className="prompt__text">{round.prompt}</div>
+      <div
+        className="prompt__text"
+        style={{ "--accent": color } as React.CSSProperties}
+      >
+        {round.prompt}
+      </div>
     </div>
   );
 }
@@ -373,12 +386,14 @@ function Standings({
               <span className="standing__rank">
                 {i === 0 && score > 0 ? "👑" : i + 1}
               </span>
-              <ModelTag model={{ id: name, name }} small />
-              <div className="standing__bar">
-                <div
-                  className="standing__fill"
-                  style={{ width: `${pct}%`, background: color }}
-                />
+              <div className="standing__info">
+                <ModelTag model={{ id: name, name }} small />
+                <div className="standing__bar">
+                  <div
+                    className="standing__fill"
+                    style={{ width: `${pct}%`, background: color }}
+                  />
+                </div>
               </div>
               <span className="standing__score">{score}</span>
             </div>

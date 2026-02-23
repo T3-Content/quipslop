@@ -1,6 +1,12 @@
 /* ── Reset & Variables ────────────────────────────────────────── */
 
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 :root {
   --bg: #0a0a0a;
@@ -97,9 +103,17 @@ body {
 }
 
 @keyframes viewer-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
-  70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px rgba(34, 197, 94, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
 }
 
 /* ── Arena ────────────────────────────────────────────────────── */
@@ -208,9 +222,17 @@ body {
 }
 
 @keyframes winner-reveal {
-  0% { background: rgba(255, 255, 255, 0); }
-  30% { background: rgba(255, 255, 255, 0.06); }
-  100% { background: rgba(255, 255, 255, 0.03); }
+  0% {
+    background: rgba(255, 255, 255, 0);
+  }
+
+  30% {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  100% {
+    background: rgba(255, 255, 255, 0.03);
+  }
 }
 
 .contestant__head {
@@ -386,8 +408,8 @@ body {
 
 .standing {
   display: flex;
-  align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 5px 0;
 }
 
@@ -404,13 +426,20 @@ body {
   flex-shrink: 0;
 }
 
-.standing__bar {
+.standing__info {
   flex: 1;
-  height: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.standing__bar {
+  height: 4px;
   background: var(--border);
   border-radius: 2px;
   overflow: hidden;
-  min-width: 40px;
+  width: 100%;
 }
 
 .standing__fill {
@@ -499,7 +528,9 @@ body {
   gap: 16px;
 }
 
-.game-over__crown { font-size: 40px; }
+.game-over__crown {
+  font-size: 40px;
+}
 
 .game-over__name {
   font-family: var(--serif);
@@ -510,7 +541,10 @@ body {
   gap: 16px;
 }
 
-.game-over__name img { width: 40px; height: 40px; }
+.game-over__name img {
+  width: 40px;
+  height: 40px;
+}
 
 .game-over__sub {
   font-size: 14px;
@@ -542,8 +576,15 @@ body {
 }
 
 @keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, 12px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 /* ── Model Tag ────────────────────────────────────────────────── */
@@ -578,17 +619,40 @@ body {
 .dots span {
   animation: blink 1.4s infinite;
 }
-.dots span:nth-child(2) { animation-delay: 0.2s; }
-.dots span:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes blink {
-  0%, 80%, 100% { opacity: 0.15; }
-  40% { opacity: 1; }
+.dots span:nth-child(2) {
+  animation-delay: 0.2s;
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+
+  0%,
+  80%,
+  100% {
+    opacity: 0.15;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
 
 /* ── Desktop (1024px+) ───────────────────────────────────────── */
 
@@ -598,7 +662,9 @@ body {
     overflow: hidden;
   }
 
-  .app { height: 100vh; }
+  .app {
+    height: 100vh;
+  }
 
   .layout {
     flex-direction: row;
@@ -625,8 +691,13 @@ body {
     margin: auto 0;
   }
 
-  .prompt { margin-bottom: 40px; }
-  .prompt__text { padding-left: 24px; }
+  .prompt {
+    margin-bottom: 40px;
+  }
+
+  .prompt__text {
+    padding-left: 24px;
+  }
 
   .showdown {
     flex-direction: row;
@@ -634,7 +705,9 @@ body {
     gap: 32px;
   }
 
-  .contestant { flex: 1; }
+  .contestant {
+    flex: 1;
+  }
 
   .standings {
     width: 280px;
