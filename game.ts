@@ -1,7 +1,402 @@
-import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { mkdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  OpenRouterClient,
+  OpenRouterLanguageModel,
+} from "@effect/ai-openrouter";
+import { BunFileSystem } from "@effect/platform-bun";
+import {
+  Config,
+  Data,
+  Effect,
+  flow,
+  Layer,
+  Logger,
+  pipe,
+  Random,
+  ServiceMap,
+} from "effect";
+import { ALL_PROMPTS } from "./prompts";
+import { LanguageModel } from "effect/unstable/ai";
+import { saveRound } from "./db";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as Path from "node:path";
+
+export const runGame = (
+  runs: number,
+  state: GameState,
+  rerender: () => void,
+  onViewerVotingStart?: () => void,
+) =>
+  Effect.runPromise(runGameEffect(runs, state, rerender, onViewerVotingStart));
+
+export const runGameEffect = Effect.fn("runGame")(
+  function* (
+    runs: number,
+    state: GameState,
+    rerender: () => void,
+    onViewerVotingStart?: () => void,
+  ) {
+    yield* Effect.logInfo("startup", `Game starting: ${runs} rounds`, {
+      models: MODELS.map((m) => m.id),
+    });
+
+    let startRound = 1;
+    const lastCompletedRound = state.completed.at(-1);
+    if (lastCompletedRound) {
+      startRound = lastCompletedRound.num + 1;
+    }
+    let endRound = startRound + runs - 1;
+
+    for (let r = startRound; r <= endRound; r++) {
+      const roundGeneration = state.generation;
+
+      const update = (f: () => void) =>
+        Effect.suspend(() => {
+          if (state.generation !== roundGeneration) {
+            return Effect.interrupt;
+          }
+          f();
+          rerender();
+          return Effect.void;
+        });
+
+      yield* runRound(runs, r, state, update, onViewerVotingStart).pipe(
+        Effect.ignoreCause({ log: "Error" }),
+        Effect.annotateLogs({ round: r }),
+      );
+    }
+  },
+  (effect) => Effect.provide(effect, EnvLayer),
+);
+
+const runRound = Effect.fn("runRound")(function* (
+  runs: number,
+  r: number,
+  state: GameState,
+  update: (f: () => void) => Effect.Effect<void>,
+  onViewerVotingStart?: () => void,
+) {
+  while (state.isPaused) {
+    yield* Effect.sleep(1000);
+  }
+
+  const gen = yield* GameGeneration;
+  const models = yield* Random.shuffle(MODELS);
+  const prompter = models[0]!;
+  const contestants: [Model, Model] = [models[1]!, models[2]!] as const;
+  const voters = [prompter, ...models.slice(3)];
+  const now = Date.now();
+
+  const round: RoundState = {
+    num: r,
+    phase: "prompting",
+    prompter,
+    promptTask: { model: prompter, startedAt: now },
+    contestants,
+    answerTasks: [
+      { model: contestants[0], startedAt: 0 },
+      { model: contestants[1], startedAt: 0 },
+    ],
+    votes: [],
+  };
+  yield* update(() => {
+    state.active = round;
+  });
+  yield* Effect.logInfo(`=== Round ${r}/${runs} ===`, {
+    prompter: prompter.name,
+    contestants: [contestants[0].name, contestants[1].name],
+    voters: voters.map((v) => v.name),
+  });
+
+  // ── Prompt phase ──
+  const prompt = yield* gen.generatePrompt.pipe(
+    withModel(prompter),
+    Effect.onError(() =>
+      update(() => {
+        round.promptTask.finishedAt = Date.now();
+        round.promptTask.error = "Failed after 3 attempts";
+        round.phase = "done";
+        state.completed = [...state.completed, round];
+        state.active = null;
+      }),
+    ),
+  );
+  yield* update(() => {
+    round.promptTask.finishedAt = Date.now();
+    round.promptTask.result = prompt;
+    round.prompt = prompt;
+  });
+
+  // ── Answer phase ──
+  const answerStart = Date.now();
+  yield* update(() => {
+    round.phase = "answering";
+    round.answerTasks[0].startedAt = answerStart;
+    round.answerTasks[1].startedAt = answerStart;
+  });
+
+  yield* Effect.forEach(
+    round.answerTasks,
+    Effect.fn(function* (task) {
+      task.result = yield* gen.generateAnswer(prompt).pipe(
+        withModel(task.model),
+        Effect.onError(() => {
+          task.error = "Failed to answer";
+          task.result = "[no answer]";
+          return Effect.void;
+        }),
+      );
+      yield* update(() => {
+        task.finishedAt = Date.now();
+      });
+    }),
+    { concurrency: "unbounded", discard: true },
+  );
+
+  // ── Vote phase ──
+  const answerA = round.answerTasks[0].result!;
+  const answerB = round.answerTasks[1].result!;
+  const voteStart = Date.now();
+  yield* update(() => {
+    round.phase = "voting";
+    round.votes = voters.map((v) => ({ voter: v, startedAt: voteStart }));
+    round.viewerVotesA = 0;
+    round.viewerVotesB = 0;
+    round.viewerVotingEndsAt = Date.now() + 30_000;
+  });
+  if (onViewerVotingStart) {
+    onViewerVotingStart();
+  }
+  const showAFirst = (yield* Random.next) > 0.5;
+
+  yield* Effect.all(
+    [
+      // Model votes
+      Effect.forEach(
+        round.votes,
+        Effect.fn(function* (vote) {
+          yield* pipe(
+            gen.generateVote({
+              prompt,
+              answerA: showAFirst ? answerA : answerB,
+              answerB: showAFirst ? answerB : answerA,
+            }),
+            withModel(vote.voter),
+            Effect.matchCause({
+              onFailure(_) {
+                vote.error = true;
+              },
+              onSuccess(result) {
+                const reversed = showAFirst
+                  ? contestants
+                  : ([...contestants].reverse() as [Model, Model]);
+                const votedFor = result === "A" ? reversed[0] : reversed[1];
+                vote.votedFor = votedFor;
+              },
+            }),
+          );
+          yield* update(() => {
+            vote.finishedAt = Date.now();
+          });
+        }),
+        { concurrency: "unbounded", discard: true },
+      ),
+      // 30-second viewer voting window
+      Effect.sleep(30_000),
+    ],
+    { concurrency: "unbounded", discard: true },
+  );
+
+  // ── Score ──
+  yield* update(() => {
+    let votesA = 0;
+    let votesB = 0;
+    for (const v of round.votes) {
+      if (v.votedFor === contestants[0]) votesA++;
+      else if (v.votedFor === contestants[1]) votesB++;
+    }
+    round.scoreA = votesA * 100;
+    round.scoreB = votesB * 100;
+    round.phase = "done";
+    if (votesA > votesB) {
+      state.scores[contestants[0].name] =
+        (state.scores[contestants[0].name] || 0) + 1;
+    } else if (votesB > votesA) {
+      state.scores[contestants[1].name] =
+        (state.scores[contestants[1].name] || 0) + 1;
+    }
+    // Viewer vote scoring
+    const vvA = round.viewerVotesA ?? 0;
+    const vvB = round.viewerVotesB ?? 0;
+    if (vvA > vvB) {
+      state.viewerScores[contestants[0].name] =
+        (state.viewerScores[contestants[0].name] || 0) + 1;
+    } else if (vvB > vvA) {
+      state.viewerScores[contestants[1].name] =
+        (state.viewerScores[contestants[1].name] || 0) + 1;
+    }
+  });
+
+  yield* Effect.sleep(5000);
+
+  // Archive round
+  saveRound(round);
+  yield* update(() => {
+    state.completed = [...state.completed, round];
+    state.active = null;
+  });
+});
+
+export class GameGeneration extends ServiceMap.Service<GameGeneration>()(
+  "quipslop/game-effect/GameGeneration",
+  {
+    make: Effect.gen(function* () {
+      const ai = yield* LanguageModel.LanguageModel;
+
+      const systemPrompt = Effect.gen(function* () {
+        const examples = yield* Random.shuffle(ALL_PROMPTS);
+        return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
+
+Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
+
+${examples.map((p) => `- ${p}`).join("\n")}
+
+Come up with something ORIGINAL — don't copy these examples.`;
+      });
+
+      const generatePrompt = Effect.gen(function* () {
+        yield* Effect.logInfo("Calling api");
+        const response = yield* ai.generateText({
+          prompt: [
+            { role: "system", content: yield* systemPrompt },
+            {
+              role: "user",
+              content:
+                "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+            },
+          ],
+        });
+        yield* Effect.logInfo("Raw response", {
+          rawText: response.text,
+          usage: response.usage,
+        });
+        if (response.text.length <= 10) {
+          return yield* new ResponseTooSmall();
+        }
+        return cleanResponse(response.text);
+      }).pipe(
+        Effect.retry({
+          while: (e) =>
+            (e._tag === "AiError" && e.isRetryable) ||
+            e._tag === "ResponseTooSmall",
+          times: 3,
+        }),
+        Effect.annotateLogs({
+          method: "generatePrompt",
+        }),
+      );
+
+      const generateAnswer = Effect.fn("generateAnswer")(
+        function* (prompt: string) {
+          yield* Effect.logInfo("Calling api");
+          const response = yield* ai.generateText({
+            prompt: [
+              {
+                role: "system",
+                content: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
+              },
+              {
+                role: "user",
+                content: `Fill in the blank: ${prompt}`,
+              },
+            ],
+          });
+          yield* Effect.logInfo("Raw response", {
+            rawText: response.text,
+            usage: response.usage,
+          });
+          if (response.text.length <= 3) {
+            return yield* new ResponseTooSmall();
+          }
+          return cleanResponse(response.text);
+        },
+        Effect.retry({
+          while: (e) =>
+            (e._tag === "AiError" && e.isRetryable) ||
+            e._tag === "ResponseTooSmall",
+          times: 3,
+        }),
+        Effect.annotateLogs({ method: "generateAnswer" }),
+      );
+
+      const generateVote = Effect.fn("generateVote")(
+        function* ({
+          prompt,
+          answerA,
+          answerB,
+        }: {
+          readonly prompt: string;
+          readonly answerA: string;
+          readonly answerB: string;
+        }) {
+          yield* Effect.logInfo("Calling api");
+          const response = yield* ai.generateText({
+            prompt: [
+              {
+                role: "system",
+                content: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
+              },
+              {
+                role: "user",
+                content: `Prompt: "${prompt}"\n\nAnswer A: "${answerA}"\nAnswer B: "${answerB}"\n\nWhich is funnier? Reply with just A or B.`,
+              },
+            ],
+          });
+          yield* Effect.logInfo("Raw response", {
+            rawText: response.text,
+            usage: response.usage,
+          });
+          const cleaned = response.text.trim().toUpperCase();
+          if (!cleaned.startsWith("A") && !cleaned.startsWith("B")) {
+            return yield* new InvalidVote();
+          }
+          return cleaned.startsWith("A") ? "A" : "B";
+        },
+        Effect.retry({
+          while: (e) =>
+            (e._tag === "AiError" && e.isRetryable) || e._tag === "InvalidVote",
+          times: 3,
+        }),
+        Effect.annotateLogs({ method: "generateVote" }),
+      );
+
+      return {
+        generatePrompt,
+        generateAnswer,
+        generateVote,
+      } as const;
+    }),
+  },
+) {
+  static layer = Layer.effect(this, this.make).pipe(
+    Layer.provide(
+      OpenRouterLanguageModel.layer({
+        model: "",
+        config: {
+          reasoning: {
+            effort: "medium",
+          },
+          max_completion_tokens: 1000,
+        },
+      }),
+    ),
+    Layer.provide(
+      OpenRouterClient.layerConfig({
+        apiKey: Config.redacted("OPENROUTER_API_KEY"),
+      }),
+    ),
+    Layer.provide(FetchHttpClient.layer),
+  );
+}
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -79,421 +474,44 @@ export type GameState = {
   generation: number;
 };
 
-// ── OpenRouter ──────────────────────────────────────────────────────────────
+// ── Errors ──────────────────────────────────────────────────────────────────
 
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  extraBody: {
-    reasoning: {
-      effort: "medium",
-    },
-  },
-});
+export class ResponseTooSmall extends Data.TaggedError("ResponseTooSmall") {}
+export class InvalidVote extends Data.TaggedError("InvalidVote") {}
 
-// ── Logger ──────────────────────────────────────────────────────────────────
+// ── Utils ───────────────────────────────────────────────────────────────────
 
-const LOGS_DIR = join(import.meta.dir, "logs");
-mkdirSync(LOGS_DIR, { recursive: true });
-const LOG_FILE = join(
-  LOGS_DIR,
-  `game-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-);
-
-export { LOG_FILE };
-
-export function log(
-  level: "INFO" | "WARN" | "ERROR",
-  category: string,
-  message: string,
-  data?: Record<string, unknown>,
-) {
-  const ts = new Date().toISOString();
-  let line = `[${ts}] ${level} [${category}] ${message}`;
-  if (data) {
-    line += " " + JSON.stringify(data);
-  }
-  appendFileSync(LOG_FILE, line + "\n");
-  if (level === "ERROR") {
-    console.error(line);
-  } else if (level === "WARN") {
-    console.warn(line);
-  } else {
-    console.log(line);
-  }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-export function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j]!, a[i]!];
-  }
-  return a;
-}
-
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  validate: (result: T) => boolean,
-  retries = 3,
-  label = "unknown",
-): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const result = await fn();
-      if (validate(result)) {
-        log("INFO", label, `Success on attempt ${attempt}`, {
-          result: typeof result === "string" ? result : String(result),
-        });
-        return result;
-      }
-      const msg = `Validation failed (attempt ${attempt}/${retries})`;
-      log("WARN", label, msg, {
-        result: typeof result === "string" ? result : String(result),
-      });
-      lastErr = new Error(`${msg}: ${JSON.stringify(result).slice(0, 100)}`);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log("WARN", label, `Error on attempt ${attempt}/${retries}: ${errMsg}`, {
-        error: errMsg,
-        stack: err instanceof Error ? err.stack : undefined,
-      });
-      lastErr = err;
-    }
-    if (attempt < retries) {
-      await new Promise((r) => setTimeout(r, 1000 * attempt));
-    }
-  }
-  log("ERROR", label, `All ${retries} attempts failed`, {
-    lastError: lastErr instanceof Error ? lastErr.message : String(lastErr),
-  });
-  throw lastErr;
-}
-
-export function isRealString(s: string, minLength = 5): boolean {
-  return s.length >= minLength;
-}
-
-export function cleanResponse(text: string): string {
+function cleanResponse(text: string): string {
   const trimmed = text.trim();
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
 }
 
-// ── AI functions ────────────────────────────────────────────────────────────
+const withModel = (model: Model) =>
+  flow(
+    OpenRouterLanguageModel.withConfigOverride({
+      model: model.id,
+    }),
+    Effect.annotateLogs({
+      modelId: model.id,
+    }),
+  );
 
-import { ALL_PROMPTS } from "./prompts";
+// ── Logger ──────────────────────────────────────────────────────────────────
 
-function buildPromptSystem(): string {
-  const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
-  return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
+const LOGS_DIR = Path.join(import.meta.dir, "logs");
+export const LOG_FILE = Path.join(
+  LOGS_DIR,
+  `game-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+);
 
-Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
+const FileLogger = Logger.layer([
+  Logger.toFile(Logger.formatLogFmt, LOG_FILE),
+]).pipe(Layer.provide(BunFileSystem.layer));
 
-${examples.map((p) => `- ${p}`).join("\n")}
-
-Come up with something ORIGINAL — don't copy these examples.`;
-}
-
-export async function callGeneratePrompt(model: Model): Promise<string> {
-  log("INFO", `prompt:${model.name}`, "Calling API", { modelId: model.id });
-  const system = buildPromptSystem();
-  const { text, usage, reasoning } = await generateText({
-    model: openrouter.chat(model.id),
-    system,
-    prompt:
-      "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
-  });
-
-  log("INFO", `prompt:${model.name}`, "Raw response", {
-    rawText: text,
-    usage,
-  });
-  return cleanResponse(text);
-}
-
-export async function callGenerateAnswer(
-  model: Model,
-  prompt: string,
-): Promise<string> {
-  log("INFO", `answer:${model.name}`, "Calling API", {
-    modelId: model.id,
-    prompt,
-  });
-  const { text, usage, reasoning } = await generateText({
-    model: openrouter.chat(model.id),
-    system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
-    prompt: `Fill in the blank: ${prompt}`,
-  });
-
-  log("INFO", `answer:${model.name}`, "Raw response", {
-    rawText: text,
-    usage,
-  });
-  return cleanResponse(text);
-}
-
-export async function callVote(
-  voter: Model,
-  prompt: string,
-  a: { answer: string },
-  b: { answer: string },
-): Promise<"A" | "B"> {
-  log("INFO", `vote:${voter.name}`, "Calling API", {
-    modelId: voter.id,
-    prompt,
-    answerA: a.answer,
-    answerB: b.answer,
-  });
-  const { text, usage, reasoning } = await generateText({
-    model: openrouter.chat(voter.id),
-    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
-    prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
-  });
-
-  log("INFO", `vote:${voter.name}`, "Raw response", { rawText: text, usage });
-  const cleaned = text.trim().toUpperCase();
-  if (!cleaned.startsWith("A") && !cleaned.startsWith("B")) {
-    throw new Error(`Invalid vote: "${text.trim()}"`);
-  }
-  return cleaned.startsWith("A") ? "A" : "B";
-}
-
-import { saveRound } from "./db.ts";
-
-// ── Game loop ───────────────────────────────────────────────────────────────
-
-export async function runGame(
-  runs: number,
-  state: GameState,
-  rerender: () => void,
-  onViewerVotingStart?: () => void,
-) {
-  let startRound = 1;
-  const lastCompletedRound = state.completed.at(-1);
-  if (lastCompletedRound) {
-    startRound = lastCompletedRound.num + 1;
-  }
-  
-  let endRound = startRound + runs - 1;
-  
-  for (let r = startRound; r <= endRound; r++) {
-    while (state.isPaused) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    const roundGeneration = state.generation;
-
-    // Reset round counter if generation changed (e.g. admin reset)
-    const latest = state.completed.at(-1);
-    const expectedR = latest ? latest.num + 1 : 1;
-    if (r !== expectedR) {
-      r = expectedR;
-      endRound = r + runs - 1;
-    }
-
-    const shuffled = shuffle([...MODELS]);
-    const prompter = shuffled[0]!;
-    const contA = shuffled[1]!;
-    const contB = shuffled[2]!;
-    const voters = [prompter, ...shuffled.slice(3)];
-    const now = Date.now();
-
-    const round: RoundState = {
-      num: r,
-      phase: "prompting",
-      prompter,
-      promptTask: { model: prompter, startedAt: now },
-      contestants: [contA, contB],
-      answerTasks: [
-        { model: contA, startedAt: 0 },
-        { model: contB, startedAt: 0 },
-      ],
-      votes: [],
-    };
-    state.active = round;
-    log("INFO", "round", `=== Round ${r}/${runs} ===`, {
-      prompter: prompter.name,
-      contestants: [contA.name, contB.name],
-      voters: voters.map((v) => v.name),
-    });
-    rerender();
-
-    // ── Prompt phase ──
-    try {
-      const prompt = await withRetry(
-        () => callGeneratePrompt(prompter),
-        (s) => isRealString(s, 10),
-        3,
-        `R${r}:prompt:${prompter.name}`,
-      );
-      if (state.generation !== roundGeneration) {
-        continue;
-      }
-      round.promptTask.finishedAt = Date.now();
-      round.promptTask.result = prompt;
-      round.prompt = prompt;
-      rerender();
-    } catch {
-      if (state.generation !== roundGeneration) {
-        continue;
-      }
-      round.promptTask.finishedAt = Date.now();
-      round.promptTask.error = "Failed after 3 attempts";
-      round.phase = "done";
-      state.completed = [...state.completed, round];
-      state.active = null;
-      rerender();
-      continue;
-    }
-
-    // ── Answer phase ──
-    round.phase = "answering";
-    const answerStart = Date.now();
-    round.answerTasks[0].startedAt = answerStart;
-    round.answerTasks[1].startedAt = answerStart;
-    rerender();
-
-    await Promise.all(
-      round.answerTasks.map(async (task) => {
-        if (state.generation !== roundGeneration) {
-          return;
-        }
-        try {
-          const answer = await withRetry(
-            () => callGenerateAnswer(task.model, round.prompt!),
-            (s) => isRealString(s, 3),
-            3,
-            `R${r}:answer:${task.model.name}`,
-          );
-          if (state.generation !== roundGeneration) {
-            return;
-          }
-          task.result = answer;
-        } catch {
-          if (state.generation !== roundGeneration) {
-            return;
-          }
-          task.error = "Failed to answer";
-          task.result = "[no answer]";
-        }
-        if (state.generation !== roundGeneration) {
-          return;
-        }
-        task.finishedAt = Date.now();
-        rerender();
-      }),
-    );
-    if (state.generation !== roundGeneration) {
-      continue;
-    }
-
-    // ── Vote phase ──
-    round.phase = "voting";
-    const answerA = round.answerTasks[0].result!;
-    const answerB = round.answerTasks[1].result!;
-    const voteStart = Date.now();
-    round.votes = voters.map((v) => ({ voter: v, startedAt: voteStart }));
-
-    // Initialize viewer voting
-    round.viewerVotesA = 0;
-    round.viewerVotesB = 0;
-    round.viewerVotingEndsAt = Date.now() + 30_000;
-    onViewerVotingStart?.();
-    rerender();
-
-    await Promise.all([
-      // Model votes
-      Promise.all(
-      round.votes.map(async (vote) => {
-        if (state.generation !== roundGeneration) {
-          return;
-        }
-        try {
-          const showAFirst = Math.random() > 0.5;
-          const first = showAFirst ? { answer: answerA } : { answer: answerB };
-          const second = showAFirst ? { answer: answerB } : { answer: answerA };
-
-          const result = await withRetry(
-            () => callVote(vote.voter, round.prompt!, first, second),
-            (v) => v === "A" || v === "B",
-            3,
-            `R${r}:vote:${vote.voter.name}`,
-          );
-          if (state.generation !== roundGeneration) {
-            return;
-          }
-          const votedFor = showAFirst
-            ? result === "A"
-              ? contA
-              : contB
-            : result === "A"
-              ? contB
-              : contA;
-
-          vote.finishedAt = Date.now();
-          vote.votedFor = votedFor;
-        } catch {
-          if (state.generation !== roundGeneration) {
-            return;
-          }
-          vote.finishedAt = Date.now();
-          vote.error = true;
-        }
-        if (state.generation !== roundGeneration) {
-          return;
-        }
-        rerender();
-      }),
-    ),
-      // 30-second viewer voting window
-      new Promise((r) => setTimeout(r, 30_000)),
-    ]);
-    if (state.generation !== roundGeneration) {
-      continue;
-    }
-
-    // ── Score ──
-    let votesA = 0;
-    let votesB = 0;
-    for (const v of round.votes) {
-      if (v.votedFor === contA) votesA++;
-      else if (v.votedFor === contB) votesB++;
-    }
-    round.scoreA = votesA * 100;
-    round.scoreB = votesB * 100;
-    round.phase = "done";
-    if (votesA > votesB) {
-      state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
-    } else if (votesB > votesA) {
-      state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
-    }
-    // Viewer vote scoring
-    const vvA = round.viewerVotesA ?? 0;
-    const vvB = round.viewerVotesB ?? 0;
-    if (vvA > vvB) {
-      state.viewerScores[contA.name] = (state.viewerScores[contA.name] || 0) + 1;
-    } else if (vvB > vvA) {
-      state.viewerScores[contB.name] = (state.viewerScores[contB.name] || 0) + 1;
-    }
-    rerender();
-
-    await new Promise((r) => setTimeout(r, 5000));
-    if (state.generation !== roundGeneration) {
-      continue;
-    }
-
-    // Archive round
-    saveRound(round);
-    state.completed = [...state.completed, round];
-    state.active = null;
-    rerender();
-  }
-
-  state.done = true;
-  rerender();
-}
+const EnvLayer = GameGeneration.layer.pipe(Layer.provideMerge(FileLogger));
