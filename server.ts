@@ -102,19 +102,14 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 }
 
 function getClientIp(req: Request, server: Bun.Server<WsData>): string {
-  // Railway's edge proxy strips client-provided X-Real-IP and sets the actual
-  // client IP. All traffic goes through the edge proxy — it cannot be bypassed.
-  // As a fallback, use the rightmost X-Forwarded-For value (the one Railway
-  // appends), then Bun's requestIP (which sees the proxy IP on Railway).
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
+  // 1. X-Envoy-External-Address — set by Railway's Envoy edge proxy, cannot
+  //    be spoofed by clients. Most trustworthy source in production.
+  const envoy = req.headers.get("x-envoy-external-address")?.trim();
+  if (envoy) return envoy;
 
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) {
-    const rightmost = xff.split(",").at(-1)?.trim();
-    if (rightmost) return rightmost;
-  }
-
+  // 2. Bun's requestIP — the actual TCP peer address. In production this is
+  //    the proxy IP, but locally it's the real client IP. Used as the primary
+  //    fallback so we never trust client-supplied headers when Envoy isn't present.
   return server.requestIP(req)?.address ?? "unknown";
 }
 
