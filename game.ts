@@ -275,9 +275,9 @@ export async function runGame(
   if (lastCompletedRound) {
     startRound = lastCompletedRound.num + 1;
   }
-
-  let endRound = startRound + runs - 1;
   
+  let endRound = startRound + runs - 1;
+
   for (let r = startRound; r <= endRound; r++) {
     while (state.isPaused) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
