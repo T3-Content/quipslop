@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import "./frontend.css";
 
@@ -327,12 +327,24 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 // ── Standings ────────────────────────────────────────────────────────────────
 
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 500;
+const SIDEBAR_DEFAULT_WIDTH = 280;
+
 function Standings({
   scores,
   activeRound,
+  position,
+  width,
+  onTogglePosition,
+  onResize,
 }: {
   scores: Record<string, number>;
   activeRound: RoundState | null;
+  position: "side" | "bottom";
+  width: number;
+  onTogglePosition: () => void;
+  onResize: (width: number) => void;
 }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const maxScore = sorted[0]?.[1] || 1;
@@ -344,11 +356,54 @@ function Standings({
       ])
     : new Set<string>();
 
+  const resizeRef = useRef<HTMLDivElement>(null);
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    function handleMouseMove(e: MouseEvent) {
+      if (position === "side") {
+        const newWidth = window.innerWidth - e.clientX;
+        onResize(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, newWidth)));
+      } else {
+        const newHeight = window.innerHeight - e.clientY;
+        onResize(Math.min(400, Math.max(120, newHeight)));
+      }
+    }
+
+    function handleMouseUp() {
+      setIsResizing(false);
+    }
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, position, onResize]);
+
   return (
-    <aside className="standings">
+    <aside
+      className={`standings standings--${position}`}
+      style={position === "side" ? { width: `${width}px` } : { height: `${width}px` }}
+    >
+      <div
+        ref={resizeRef}
+        className={`standings__resize-handle standings__resize-handle--${position}`}
+        onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
+      />
       <div className="standings__head">
         <span className="standings__title">Standings</span>
         <div className="standings__links">
+          <button
+            className="standings__toggle-btn"
+            onClick={onTogglePosition}
+            title={position === "side" ? "Move to bottom" : "Move to side"}
+          >
+            {position === "side" ? "↓" : "→"}
+          </button>
           <a href="/history" className="standings__link">
             History
           </a>
@@ -412,6 +467,15 @@ function App() {
   const [totalRounds, setTotalRounds] = useState<number | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [sidebarPosition, setSidebarPosition] = useState<"side" | "bottom">("side");
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+
+  const toggleSidebarPosition = useCallback(() => {
+    setSidebarPosition((p) => {
+      setSidebarWidth(p === "side" ? 180 : SIDEBAR_DEFAULT_WIDTH);
+      return p === "side" ? "bottom" : "side";
+    });
+  }, []);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -459,7 +523,7 @@ function App() {
 
   return (
     <div className="app">
-      <div className="layout">
+      <div className={`layout layout--sidebar-${sidebarPosition}`}>
         <main className="main">
           <header className="header">
             <a href="/" className="logo">
@@ -501,7 +565,14 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} activeRound={state.active} />
+        <Standings
+          scores={state.scores}
+          activeRound={state.active}
+          position={sidebarPosition}
+          width={sidebarWidth}
+          onTogglePosition={toggleSidebarPosition}
+          onResize={setSidebarWidth}
+        />
       </div>
     </div>
   );
