@@ -439,6 +439,7 @@ const server = Bun.serve<WsData>({
 
       clearAllRounds();
       clearAllBets();
+      invalidateBetCache();
       historyCache.clear();
       gameState.completed = [];
       gameState.active = null;
