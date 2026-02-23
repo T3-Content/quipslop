@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { timingSafeEqual } from "node:crypto";
+import { resolve, relative } from "node:path";
 import indexHtml from "./index.html";
 import historyHtml from "./history.html";
 import adminHtml from "./admin.html";
@@ -115,6 +116,7 @@ const VIEWER_VOTE_BROADCAST_DEBOUNCE_MS = parsePositiveInt(
 );
 const ADMIN_COOKIE = "quipslop_admin";
 const ADMIN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const PUBLIC_DIR = resolve("./public");
 
 const requestWindows = new Map<string, number[]>();
 const wsByIp = new Map<string, number>();
@@ -423,8 +425,16 @@ const server = Bun.serve<WsData>({
     const ip = getClientIp(req, server);
 
     if (url.pathname.startsWith("/assets/")) {
-      const path = `./public${url.pathname}`;
-      const file = Bun.file(path);
+      const assetPath = url.pathname.slice(8);
+      if (!assetPath) {
+        return new Response("Not found", { status: 404 });
+      }
+      const resolved = resolve(PUBLIC_DIR, assetPath);
+      const relativePath = relative(PUBLIC_DIR, resolved);
+      if (relativePath.startsWith("..") || relativePath === "..") {
+        return new Response("Forbidden", { status: 403 });
+      }
+      const file = Bun.file(resolved);
       return new Response(file, {
         headers: {
           "Cache-Control": "public, max-age=604800, immutable",
