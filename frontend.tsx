@@ -105,7 +105,7 @@ function useElapsed(startTime: number | undefined) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     if (!startTime) { setElapsed(0); return; }
-    const tick = () => setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTime) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);

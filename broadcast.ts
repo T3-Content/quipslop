@@ -362,12 +362,12 @@ function drawPhaseTimer(round: RoundState, mainW: number, isShowingPrevious: boo
     label = `NEXT ROUND IN ${remaining}S`;
     isCountdown = true;
   } else if (round.phase === "answering" || round.phase === "voting") {
-    const elapsed = round.phaseChangedAt ? Math.floor((Date.now() - round.phaseChangedAt) / 1000) : 0;
+    const elapsed = round.phaseChangedAt ? Math.max(0, Math.floor((Date.now() - round.phaseChangedAt) / 1000)) : 0;
     label = round.phase === "answering"
       ? `WAITING FOR ANSWERS — ${elapsed}S`
       : `JUDGES VOTING — ${elapsed}S`;
   } else if (round.phase === "prompting") {
-    const elapsed = round.phaseChangedAt ? Math.floor((Date.now() - round.phaseChangedAt) / 1000) : 0;
+    const elapsed = round.phaseChangedAt ? Math.max(0, Math.floor((Date.now() - round.phaseChangedAt) / 1000)) : 0;
     label = `WRITING PROMPT — ${elapsed}S`;
   } else {
     return;
