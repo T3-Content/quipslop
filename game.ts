@@ -240,7 +240,7 @@ export async function callGeneratePrompt(model: Model): Promise<string> {
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(model.id),
     system,
-    temperature: 1.2,
+    temperature: model.id.startsWith("anthropic/") ? 1.0 : 1.2,
     prompt:
       `Generate a single original Quiplash prompt. Try this style: ${style}. Be creative, surprising, and don't repeat common patterns.`,
   });
