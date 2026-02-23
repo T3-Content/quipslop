@@ -253,7 +253,7 @@ export async function callVote(
   return cleaned.startsWith("A") ? "A" : "B";
 }
 
-import { saveRound } from "./db.ts";
+import { saveRound, resolveBets } from "./db.ts";
 
 // ── Game loop ───────────────────────────────────────────────────────────────
 
@@ -446,8 +446,12 @@ export async function runGame(
     round.phase = "done";
     if (votesA > votesB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
+      resolveBets(r, contA.name);
     } else if (votesB > votesA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
+      resolveBets(r, contB.name);
+    } else {
+      resolveBets(r, null); // tie — refund
     }
     rerender();
 
