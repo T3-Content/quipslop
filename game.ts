@@ -2,6 +2,10 @@ import { generateText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  applyRoundToStreaks,
+  type StreakMap,
+} from "./streaks.ts";
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +74,7 @@ export type GameState = {
   completed: RoundState[];
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: StreakMap;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -449,6 +454,7 @@ export async function runGame(
     } else if (votesB > votesA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
     }
+    applyRoundToStreaks(state.streaks, round);
     rerender();
 
     await new Promise((r) => setTimeout(r, 5000));

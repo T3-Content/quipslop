@@ -1,3 +1,5 @@
+import type { StreakMap } from "./streaks.ts";
+
 type Model = { id: string; name: string };
 type TaskInfo = {
   model: Model;
@@ -29,6 +31,7 @@ type GameState = {
   completed: RoundState[];
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: StreakMap;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -246,7 +249,7 @@ function drawHeader() {
 
 }
 
-function drawScoreboard(scores: Record<string, number>) {
+function drawScoreboard(scores: Record<string, number>, streaks: StreakMap) {
   const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   
   roundRect(WIDTH - 380, 0, 380, HEIGHT, 0, "#111");
@@ -263,6 +266,7 @@ function drawScoreboard(scores: Record<string, number>) {
     const y = 140 + index * 68;
     const color = getColor(name);
     const pct = maxScore > 0 ? (score / maxScore) : 0;
+    const streak = streaks[name] ?? { current: 0 };
 
     ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#888";
@@ -283,6 +287,12 @@ function drawScoreboard(scores: Record<string, number>) {
     roundRect(WIDTH - 304, y + 42, 208, 4, 2, "#1c1c1c");
     if (pct > 0) {
       roundRect(WIDTH - 304, y + 42, Math.max(8, 208 * pct), 4, 2, color);
+    }
+
+    if (streak.current >= 2) {
+      ctx.font = '700 13px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#ffd396";
+      ctx.fillText(`🔥 ${streak.current}`, WIDTH - 304, y + 62);
     }
 
     ctx.font = '700 20px "JetBrains Mono", monospace';
@@ -519,7 +529,7 @@ function draw() {
       return;
   }
 
-  drawScoreboard(state.scores);
+  drawScoreboard(state.scores, state.streaks);
   
   const lastCompleted = state.completed[state.completed.length - 1];
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
