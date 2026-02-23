@@ -282,17 +282,15 @@ export async function callVote(
   a: { answer: string },
   b: { answer: string },
 ): Promise<"A" | "B"> {
-  const audienceCtx = buildAudienceContext();
   log("INFO", `vote:${voter.name}`, "Calling API", {
     modelId: voter.id,
     prompt,
     answerA: a.answer,
     answerB: b.answer,
-    hasAudience: audienceCtx.length > 0,
   });
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(voter.id),
-    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else. Judge based on humor, creativity, and unexpectedness.${audienceCtx}`,
+    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else. Judge based on humor, creativity, and unexpectedness.`,
     prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
   });
 
