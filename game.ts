@@ -175,7 +175,8 @@ export function isRealString(s: string, minLength = 5): boolean {
 export function cleanResponse(text: string): string {
   const trimmed = text.trim();
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+      (trimmed.startsWith("“") && trimmed.endsWith("”"))) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
@@ -274,9 +275,9 @@ export async function runGame(
   if (lastCompletedRound) {
     startRound = lastCompletedRound.num + 1;
   }
-  
+
   let endRound = startRound + runs - 1;
-  
+
   for (let r = startRound; r <= endRound; r++) {
     while (state.isPaused) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
