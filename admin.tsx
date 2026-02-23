@@ -2,6 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./admin.css";
 
+type BenchSummary = {
+  id: string;
+  status: string;
+  totalRounds: number;
+  completedRounds: number;
+} | null;
+
 type AdminSnapshot = {
   isPaused: boolean;
   isRunningRound: boolean;
@@ -9,6 +16,7 @@ type AdminSnapshot = {
   completedInMemory: number;
   persistedRounds: number;
   viewerCount: number;
+  bench?: BenchSummary;
 };
 
 type AdminResponse = { ok: true } & AdminSnapshot;
@@ -61,6 +69,7 @@ function App() {
   const [pending, setPending] = useState<string | null>(null);
   const [isResetOpen, setIsResetOpen] = useState(false);
   const [resetText, setResetText] = useState("");
+  const [benchRoundsPerPairing, setBenchRoundsPerPairing] = useState(1);
 
   useEffect(() => {
     let mounted = true;
@@ -173,6 +182,53 @@ function App() {
     }
   }
 
+  async function onBenchStart() {
+    setError(null);
+    setPending("bench-start");
+    try {
+      const response = await fetch("/api/bench/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roundsPerPairing: benchRoundsPerPairing }),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Request failed (${response.status})`);
+      }
+      try {
+        const statusData = await requestAdminJson("/api/admin/status");
+        setSnapshot(statusData);
+      } catch {}
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start benchmark");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onBenchCancel() {
+    setError(null);
+    setPending("bench-cancel");
+    try {
+      const response = await fetch("/api/bench/cancel", {
+        method: "POST",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+      try {
+        const statusData = await requestAdminJson("/api/admin/status");
+        setSnapshot(statusData);
+      } catch {}
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel benchmark");
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function onLogout() {
     setError(null);
     setPending("logout");
@@ -263,6 +319,7 @@ function App() {
         <nav className="quick-links">
           <a href="/">Live Game</a>
           <a href="/history">History</a>
+          <a href="/bench">Bench</a>
           <button className="link-button" onClick={onLogout} disabled={busy}>
             Logout
           </button>
@@ -326,6 +383,86 @@ function App() {
           </button>
         </section>
       </main>
+
+      <section className="panel panel--main" style={{ marginTop: 24 }}>
+        <div className="panel-head">
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(24px, 4vw, 36px)", lineHeight: 1 }}>
+            Benchmark
+          </h2>
+          <p>
+            Run a round-robin benchmark where every model plays against every
+            other model.{" "}
+            <a href="/bench" style={{ color: "var(--accent)", textDecoration: "none" }}>
+              View results
+            </a>
+          </p>
+        </div>
+
+        {snapshot?.bench ? (
+          <div>
+            <div className="status-grid" style={{ marginBottom: 16 }}>
+              <StatusCard label="Status" value={snapshot.bench.status} />
+              <StatusCard
+                label="Progress"
+                value={`${snapshot.bench.completedRounds}/${snapshot.bench.totalRounds}`}
+              />
+            </div>
+            <div className="actions" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+              <button
+                type="button"
+                className="btn btn--danger"
+                disabled={busy}
+                onClick={onBenchCancel}
+              >
+                {pending === "bench-cancel" ? "Cancelling..." : "Cancel Benchmark"}
+              </button>
+              <a
+                href="/bench"
+                className="btn"
+                style={{ textAlign: "center", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                View Live Results
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="actions" style={{ gridTemplateColumns: "auto 1fr auto" }}>
+            <select
+              value={benchRoundsPerPairing}
+              onChange={(e) => setBenchRoundsPerPairing(Number(e.target.value))}
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+                padding: "10px 12px",
+                outline: "none",
+              }}
+              disabled={busy}
+            >
+              <option value={1}>1 round/pairing</option>
+              <option value={3}>3 rounds/pairing</option>
+              <option value={5}>5 rounds/pairing</option>
+            </select>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={busy}
+              onClick={onBenchStart}
+            >
+              {pending === "bench-start" ? "Starting..." : "Start Benchmark"}
+            </button>
+            <a
+              href="/bench"
+              className="btn"
+              style={{ textAlign: "center", textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+            >
+              Past Results
+            </a>
+          </div>
+        )}
+      </section>
 
       {isResetOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

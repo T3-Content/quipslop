@@ -4,6 +4,7 @@ import indexHtml from "./index.html";
 import historyHtml from "./history.html";
 import adminHtml from "./admin.html";
 import broadcastHtml from "./broadcast.html";
+import benchHtml from "./bench.html";
 import { clearAllRounds, getRounds, getAllRounds } from "./db.ts";
 import {
   MODELS,
@@ -13,6 +14,13 @@ import {
   type GameState,
   type RoundState,
 } from "./game.ts";
+import { runBench, getActiveBenchRun, cancelBench } from "./bench.ts";
+import {
+  getBenchRuns,
+  getBenchRun,
+  getBenchRounds,
+  markStaleBenchRunsAsError,
+} from "./bench-db.ts";
 
 const VERSION = crypto.randomUUID().slice(0, 8);
 
@@ -217,6 +225,21 @@ function setHistoryCache(key: string, body: string, expiresAt: number) {
 
 const clients = new Set<ServerWebSocket<WsData>>();
 
+function getBenchSummary() {
+  const active = getActiveBenchRun();
+  if (!active) return null;
+  return {
+    id: active.id,
+    status: active.status,
+    totalRounds: active.totalRounds,
+    completedRounds: active.completedRounds,
+    currentPairing: active.currentPairing
+      ? { modelA: active.currentPairing.modelA, modelB: active.currentPairing.modelB }
+      : undefined,
+    currentRound: active.currentRound,
+  };
+}
+
 function getClientState() {
   return {
     active: gameState.active,
@@ -235,6 +258,7 @@ function broadcast() {
     totalRounds: runs,
     viewerCount: clients.size,
     version: VERSION,
+    bench: getBenchSummary(),
   });
   for (const ws of clients) {
     ws.send(msg);
@@ -259,6 +283,7 @@ function getAdminSnapshot() {
     completedInMemory: gameState.completed.length,
     persistedRounds: getRounds(1, 1).total,
     viewerCount: clients.size,
+    bench: getBenchSummary(),
   };
 }
 
@@ -273,6 +298,7 @@ const server = Bun.serve<WsData>({
     "/history": historyHtml,
     "/admin": adminHtml,
     "/broadcast": broadcastHtml,
+    "/bench": benchHtml,
   },
   async fetch(req, server) {
     const url = new URL(req.url);
@@ -483,6 +509,95 @@ const server = Bun.serve<WsData>({
       );
     }
 
+    // ── Bench API endpoints ──
+    if (url.pathname === "/api/bench/start") {
+      if (req.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      if (!isAdminAuthorized(req, url)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (getActiveBenchRun()) {
+        return new Response(JSON.stringify({ error: "A benchmark is already running" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      let roundsPerPairing = 1;
+      try {
+        const body = await req.json();
+        const rpp = Number((body as Record<string, unknown>).roundsPerPairing);
+        if (Number.isFinite(rpp) && rpp >= 1 && rpp <= 10) {
+          roundsPerPairing = Math.floor(rpp);
+        }
+      } catch {}
+
+      const config = { models: [...MODELS], roundsPerPairing };
+      runBench(config, broadcast).catch((err) => {
+        log("ERROR", "bench", "Bench run failed", { error: err.message });
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+      const active = getActiveBenchRun();
+      return new Response(JSON.stringify({ ok: true, runId: active?.id }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    if (url.pathname === "/api/bench/cancel") {
+      if (req.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      if (!isAdminAuthorized(req, url)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const cancelled = cancelBench();
+      return new Response(JSON.stringify({ ok: true, cancelled }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    if (url.pathname === "/api/bench/status") {
+      const active = getActiveBenchRun();
+      return new Response(JSON.stringify({ active: active ? getBenchSummary() : null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    if (url.pathname === "/api/bench/runs") {
+      const benchRuns = getBenchRuns();
+      return new Response(JSON.stringify(benchRuns), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    if (url.pathname.startsWith("/api/bench/results/")) {
+      const runId = url.pathname.slice("/api/bench/results/".length);
+      if (!runId) {
+        return new Response("Missing run ID", { status: 400 });
+      }
+      const run = getBenchRun(runId);
+      if (!run) {
+        return new Response("Not found", { status: 404 });
+      }
+      const rounds = getBenchRounds(runId);
+      return new Response(JSON.stringify({ run, rounds }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
     if (url.pathname === "/api/history") {
       if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
         log("WARN", "http", "History rate limited", { ip });
@@ -615,6 +730,9 @@ const server = Bun.serve<WsData>({
     return new Response("Internal Server Error", { status: 500 });
   },
 });
+
+// Mark stale bench runs from previous crashes
+markStaleBenchRunsAsError();
 
 console.log(`\n🎮 quipslop Web — http://localhost:${server.port}`);
 console.log(`📡 WebSocket — ws://localhost:${server.port}/ws`);
