@@ -12,17 +12,21 @@ db.exec(`
     data TEXT
   );
 `);
+db.exec("PRAGMA journal_mode = WAL;");
+
+const insertRound = db.prepare("INSERT INTO rounds (num, data) VALUES ($num, $data)");
+const countRounds = db.query("SELECT COUNT(*) as count FROM rounds");
+const selectRoundsPage = db.prepare("SELECT data FROM rounds ORDER BY num DESC, id DESC LIMIT $limit OFFSET $offset");
+const selectAllRounds = db.query("SELECT data FROM rounds ORDER BY num ASC, id ASC");
 
 export function saveRound(round: RoundState) {
-  const insert = db.prepare("INSERT INTO rounds (num, data) VALUES ($num, $data)");
-  insert.run({ $num: round.num, $data: JSON.stringify(round) });
+  insertRound.run({ $num: round.num, $data: JSON.stringify(round) });
 }
 
 export function getRounds(page: number = 1, limit: number = 10) {
   const offset = (page - 1) * limit;
-  const countQuery = db.query("SELECT COUNT(*) as count FROM rounds").get() as { count: number };
-  const rows = db.query("SELECT data FROM rounds ORDER BY num DESC, id DESC LIMIT $limit OFFSET $offset")
-    .all({ $limit: limit, $offset: offset }) as { data: string }[];
+  const countQuery = countRounds.get() as { count: number };
+  const rows = selectRoundsPage.all({ $limit: limit, $offset: offset }) as { data: string }[];
   return {
     rounds: rows.map(r => JSON.parse(r.data) as RoundState),
     total: countQuery.count,
@@ -33,7 +37,7 @@ export function getRounds(page: number = 1, limit: number = 10) {
 }
 
 export function getAllRounds() {
-  const rows = db.query("SELECT data FROM rounds ORDER BY num ASC, id ASC").all() as { data: string }[];
+  const rows = selectAllRounds.all() as { data: string }[];
   return rows.map(r => JSON.parse(r.data) as RoundState);
 }
 

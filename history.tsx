@@ -180,17 +180,17 @@ function HistoryCard({ round }: { round: RoundState }) {
               {votesA} {votesA === 1 ? "vote" : "votes"}
             </div>
             <div className="history-contestant__voters">
-              {votersA.map(
-                (v) =>
-                  getLogo(v.name) && (
-                    <img
-                      key={v.name}
-                      src={getLogo(v.name)!}
-                      title={v.name}
-                      className="voter-mini-logo"
-                    />
-                  ),
-              )}
+              {votersA.map((v) => {
+                const logo = getLogo(v.name);
+                return logo ? (
+                  <img
+                    key={v.name}
+                    src={logo}
+                    title={v.name}
+                    className="voter-mini-logo"
+                  />
+                ) : null;
+              })}
             </div>
           </div>
         </div>
@@ -215,17 +215,17 @@ function HistoryCard({ round }: { round: RoundState }) {
               {votesB} {votesB === 1 ? "vote" : "votes"}
             </div>
             <div className="history-contestant__voters">
-              {votersB.map(
-                (v) =>
-                  getLogo(v.name) && (
-                    <img
-                      key={v.name}
-                      src={getLogo(v.name)!}
-                      title={v.name}
-                      className="voter-mini-logo"
-                    />
-                  ),
-              )}
+              {votersB.map((v) => {
+                const logo = getLogo(v.name);
+                return logo ? (
+                  <img
+                    key={v.name}
+                    src={logo}
+                    title={v.name}
+                    className="voter-mini-logo"
+                  />
+                ) : null;
+              })}
             </div>
           </div>
         </div>
@@ -244,18 +244,32 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/history?page=${page}`)
-      .then((res) => res.json())
+    setError(null);
+    fetch(`/api/history?page=${page}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
-        setRounds(data.rounds);
-        setTotalPages(data.totalPages || 1);
-        setLoading(false);
+        if (!cancelled) {
+          setRounds(data.rounds);
+          setTotalPages(data.totalPages || 1);
+          setLoading(false);
+        }
       })
       .catch((err) => {
-        setError(err.message);
-        setLoading(false);
+        if (!cancelled && err.name !== "AbortError") {
+          setError(err.message);
+          setLoading(false);
+        }
       });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [page]);
 
   return (
@@ -286,7 +300,7 @@ function App() {
               style={{ display: "flex", flexDirection: "column", gap: "32px" }}
             >
               {rounds.map((r) => (
-                <HistoryCard key={r.num + "-" + Math.random()} round={r} />
+                <HistoryCard key={`round-${r.num}`} round={r} />
               ))}
             </div>
 

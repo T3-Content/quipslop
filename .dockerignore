@@ -3,6 +3,19 @@ node_modules
 .env
 logs
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .DS_Store
 .cursor
 .idea
+
+# Dev/utility files not needed in production
+bulk-test.ts
+check-db.ts
+quipslop.tsx
+scripts/
+*.md
+todo.md
+CLAUDE.md
+README.md
+LICENSE

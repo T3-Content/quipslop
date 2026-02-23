@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODELS,
@@ -21,6 +21,7 @@ const CONCURRENCY = 100;
 
 const startTime = Date.now();
 const LOGS_DIR = join(import.meta.dir, "logs");
+mkdirSync(LOGS_DIR, { recursive: true });
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const LOG_FILE = join(LOGS_DIR, `bulk-test-${timestamp}.log`);
 

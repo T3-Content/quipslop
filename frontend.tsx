@@ -199,11 +199,11 @@ function ContestantCard({
               vote{voteCount !== 1 ? "s" : ""}
             </span>
             <span className="vote-meta__dots">
-              {voters.map((v, i) => {
+              {voters.map((v) => {
                 const logo = getLogo(v.voter.name);
                 return logo ? (
                   <img
-                    key={i}
+                    key={v.voter.name}
                     src={logo}
                     alt={v.voter.name}
                     title={v.voter.name}
@@ -211,7 +211,7 @@ function ContestantCard({
                   />
                 ) : (
                   <span
-                    key={i}
+                    key={v.voter.name}
                     className="voter-dot voter-dot--letter"
                     style={{ color: getColor(v.voter.name) }}
                     title={v.voter.name}
@@ -413,14 +413,20 @@ function App() {
     const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
     let ws: WebSocket;
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let reconnectAttempt = 0;
 
     let knownVersion: string | null = null;
     function connect() {
       ws = new WebSocket(wsUrl);
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        setConnected(true);
+        reconnectAttempt = 0;
+      };
       ws.onclose = () => {
         setConnected(false);
-        reconnectTimer = setTimeout(connect, 2000);
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), 30000) + Math.random() * 1000;
+        reconnectAttempt++;
+        reconnectTimer = setTimeout(connect, delay);
       };
       ws.onmessage = (e) => {
         const msg: ServerMessage = JSON.parse(e.data);

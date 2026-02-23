@@ -1,6 +1,6 @@
 {
   "name": "quipslop",
-  "module": "index.ts",
+  "module": "server.ts",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,7 +8,9 @@
     "start:cli": "bun quipslop.tsx",
     "start:web": "bun --hot server.ts",
     "start:stream": "bun ./scripts/stream-browser.ts live",
-    "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun"
+    "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",

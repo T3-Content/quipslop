@@ -162,7 +162,7 @@ export async function withRetry<T>(
 }
 
 export function isRealString(s: string, minLength = 5): boolean {
-  return s.length >= minLength;
+  return s.trim().length >= minLength;
 }
 
 export function cleanResponse(text: string): string {
@@ -192,7 +192,7 @@ Come up with something ORIGINAL — don't copy these examples.`;
 export async function callGeneratePrompt(model: Model): Promise<string> {
   log("INFO", `prompt:${model.name}`, "Calling API", { modelId: model.id });
   const system = buildPromptSystem();
-  const { text, usage, reasoning } = await generateText({
+  const { text, usage } = await generateText({
     model: openrouter.chat(model.id),
     system,
     prompt:
@@ -214,7 +214,7 @@ export async function callGenerateAnswer(
     modelId: model.id,
     prompt,
   });
-  const { text, usage, reasoning } = await generateText({
+  const { text, usage } = await generateText({
     model: openrouter.chat(model.id),
     system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
     prompt: `Fill in the blank: ${prompt}`,
@@ -239,18 +239,18 @@ export async function callVote(
     answerA: a.answer,
     answerB: b.answer,
   });
-  const { text, usage, reasoning } = await generateText({
+  const { text, usage } = await generateText({
     model: openrouter.chat(voter.id),
     system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
     prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
   });
 
   log("INFO", `vote:${voter.name}`, "Raw response", { rawText: text, usage });
-  const cleaned = text.trim().toUpperCase();
-  if (!cleaned.startsWith("A") && !cleaned.startsWith("B")) {
+  const cleaned = text.trim().toUpperCase().charAt(0);
+  if (cleaned !== "A" && cleaned !== "B") {
     throw new Error(`Invalid vote: "${text.trim()}"`);
   }
-  return cleaned.startsWith("A") ? "A" : "B";
+  return cleaned as "A" | "B";
 }
 
 import { saveRound } from "./db.ts";
@@ -280,8 +280,9 @@ export async function runGame(
     const latest = state.completed.at(-1);
     const expectedR = latest ? latest.num + 1 : 1;
     if (r !== expectedR) {
-      r = expectedR;
-      endRound = r + runs - 1;
+      r = expectedR - 1; // subtract 1 because the for-loop increments r
+      endRound = expectedR + runs - 1;
+      continue;
     }
 
     const shuffled = shuffle([...MODELS]);
@@ -451,13 +452,14 @@ export async function runGame(
     }
     rerender();
 
+    // Archive round before the display delay to prevent data loss on crash
+    saveRound(round);
+
     await new Promise((r) => setTimeout(r, 5000));
     if (state.generation !== roundGeneration) {
       continue;
     }
 
-    // Archive round
-    saveRound(round);
     state.completed = [...state.completed, round];
     state.active = null;
     rerender();
