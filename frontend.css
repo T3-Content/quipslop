@@ -138,6 +138,56 @@ body {
   color: var(--text-dim);
 }
 
+/* ── Phase Timer ─────────────────────────────────────────────── */
+
+.phase-timer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.phase-timer__bar {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.phase-timer__fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+
+.phase-timer__fill--countdown {
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+
+.phase-timer__fill--indeterminate {
+  width: 30%;
+  background: var(--text-muted);
+  animation: timer-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes timer-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
+}
+
+.phase-timer__label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ── Prompt ───────────────────────────────────────────────────── */
 
 .prompt {

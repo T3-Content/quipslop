@@ -16,6 +16,7 @@ type VoteInfo = {
 type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  phaseChangedAt?: number;
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
