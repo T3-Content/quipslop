@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { timingSafeEqual } from "node:crypto";
 import indexHtml from "./index.html";
 import historyHtml from "./history.html";
+import auditHtml from "./audit.html";
 import adminHtml from "./admin.html";
 import broadcastHtml from "./broadcast.html";
 import { clearAllRounds, getRounds, getAllRounds } from "./db.ts";
@@ -13,6 +14,12 @@ import {
   type GameState,
   type RoundState,
 } from "./game.ts";
+import {
+  cloneStreaks,
+  computeStreaks,
+  createEmptyStreaks,
+  streakMapsEqual,
+} from "./streaks.ts";
 
 const VERSION = crypto.randomUUID().slice(0, 8);
 
@@ -29,7 +36,9 @@ if (!process.env.OPENROUTER_API_KEY) {
 }
 
 const allRounds = getAllRounds();
+const modelNames = MODELS.map((model) => model.name);
 const initialScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+const initialStreaks = computeStreaks(modelNames, allRounds);
 
 let initialCompleted: RoundState[] = [];
 if (allRounds.length > 0) {
@@ -54,6 +63,7 @@ const gameState: GameState = {
   completed: initialCompleted,
   active: null,
   scores: initialScores,
+  streaks: initialStreaks,
   done: false,
   isPaused: false,
   generation: 0,
@@ -245,6 +255,24 @@ function getAdminSnapshot() {
   };
 }
 
+function mergeAuditRounds(): RoundState[] {
+  const roundsByNum = new Map<number, RoundState>();
+
+  for (const round of getAllRounds()) {
+    roundsByNum.set(round.num, round);
+  }
+
+  for (const round of gameState.completed) {
+    roundsByNum.set(round.num, round);
+  }
+
+  if (gameState.active?.phase === "done") {
+    roundsByNum.set(gameState.active.num, gameState.active);
+  }
+
+  return [...roundsByNum.values()].sort((a, b) => a.num - b.num);
+}
+
 // ── Server ──────────────────────────────────────────────────────────────────
 
 const port = parseInt(process.env.PORT ?? "5109", 10); // 5109 = SLOP
@@ -254,6 +282,7 @@ const server = Bun.serve<WsData>({
   routes: {
     "/": indexHtml,
     "/history": historyHtml,
+    "/audit": auditHtml,
     "/admin": adminHtml,
     "/broadcast": broadcastHtml,
   },
@@ -409,6 +438,7 @@ const server = Bun.serve<WsData>({
       gameState.completed = [];
       gameState.active = null;
       gameState.scores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+      gameState.streaks = createEmptyStreaks(modelNames);
       gameState.done = false;
       gameState.isPaused = true;
       gameState.generation += 1;
@@ -463,6 +493,32 @@ const server = Bun.serve<WsData>({
           },
         },
       );
+    }
+
+    if (url.pathname === "/api/audit") {
+      if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+
+      const rounds = mergeAuditRounds();
+      const liveStreaks = cloneStreaks(gameState.streaks);
+      const derivedStreaks = computeStreaks(modelNames, rounds);
+      const body = JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        modelNames,
+        rounds,
+        liveStreaks,
+        derivedStreaks,
+        hasMismatch: !streakMapsEqual(liveStreaks, derivedStreaks),
+      });
+
+      return new Response(body, {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
     }
 
     if (url.pathname === "/api/history") {

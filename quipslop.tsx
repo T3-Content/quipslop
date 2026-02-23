@@ -13,6 +13,7 @@ import {
   type RoundState,
   type GameState,
 } from "./game.ts";
+import { createEmptyStreaks, type StreakMap } from "./streaks.ts";
 
 // ── Components ──────────────────────────────────────────────────────────────
 
@@ -173,7 +174,13 @@ function RoundView({ round, total }: { round: RoundState; total: number }) {
   );
 }
 
-function Scoreboard({ scores }: { scores: Record<string, number> }) {
+function Scoreboard({
+  scores,
+  streaks,
+}: {
+  scores: Record<string, number>;
+  streaks: StreakMap;
+}) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const maxScore = sorted[0]?.[1] || 1;
   const barWidth = 30;
@@ -185,6 +192,7 @@ function Scoreboard({ scores }: { scores: Record<string, number> }) {
       </Text>
       <Box flexDirection="column" marginTop={1}>
         {sorted.map(([name, score], i) => {
+          const streak = streaks[name] ?? { current: 0, best: 0 };
           const filled = Math.round((score / maxScore) * barWidth);
           const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
           const medal =
@@ -199,6 +207,7 @@ function Scoreboard({ scores }: { scores: Record<string, number> }) {
               <Text bold>
                 {score} {score === 1 ? "win" : "wins"}
               </Text>
+              {streak.current >= 2 && <Text dimColor>🔥 {streak.current}</Text>}
               <Text>{medal}</Text>
             </Box>
           );
@@ -224,6 +233,7 @@ function Game({ runs }: { runs: number }) {
     completed: [],
     active: null,
     scores: Object.fromEntries(MODELS.map((m) => [m.name, 0])),
+    streaks: createEmptyStreaks(MODELS.map((m) => m.name)),
     done: false,
     isPaused: false,
     generation: 0,
@@ -249,7 +259,7 @@ function Game({ runs }: { runs: number }) {
 
       {state.active && <RoundView round={state.active} total={runs} />}
 
-      {state.done && <Scoreboard scores={state.scores} />}
+      {state.done && <Scoreboard scores={state.scores} streaks={state.streaks} />}
       {state.done && (
         <Box marginTop={1}>
           <Text dimColor>Log: {LOG_FILE}</Text>

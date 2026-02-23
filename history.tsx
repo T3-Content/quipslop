@@ -270,6 +270,9 @@ function App() {
             <a href="/" className="back-link">
               ← Back to Game
             </a>
+            <a href="/audit" className="back-link">
+              Streak Audit
+            </a>
           </div>
         </div>
 
