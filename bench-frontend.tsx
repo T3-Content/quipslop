@@ -530,10 +530,12 @@ function App() {
     let ws: WebSocket;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 
+    let unmounted = false;
+
     function connect() {
       ws = new WebSocket(wsUrl);
       ws.onclose = () => {
-        reconnectTimer = setTimeout(connect, 3000);
+        if (!unmounted) reconnectTimer = setTimeout(connect, 3000);
       };
       ws.onmessage = (e) => {
         try {
@@ -551,9 +553,16 @@ function App() {
                 .then((r) => r.json())
                 .then((data: BenchRun[]) => {
                   setRuns(data);
-                  // Auto-select the latest completed run
                   if (data.length > 0) {
-                    setSelectedRunId(data[0]!.id);
+                    const latestId = data[0]!.id;
+                    setSelectedRunId(latestId);
+                    // Force re-fetch results even if selectedRunId didn't change
+                    fetch(`/api/bench/results/${latestId}`)
+                      .then((r) => r.json())
+                      .then((resData: { run: BenchRun; rounds: BenchRound[] }) => {
+                        setRoundsData(resData.rounds.map((r) => JSON.parse(r.data) as BenchRoundData));
+                      })
+                      .catch(() => {});
                   }
                 })
                 .catch(() => {});
@@ -565,6 +574,7 @@ function App() {
 
     connect();
     return () => {
+      unmounted = true;
       clearTimeout(reconnectTimer);
       ws?.close();
     };

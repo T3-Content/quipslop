@@ -96,6 +96,23 @@ async function runBenchRound(
   const nonContestants = allModels.filter(
     (m) => m.id !== pairing.modelA.id && m.id !== pairing.modelB.id,
   );
+  if (nonContestants.length === 0) {
+    return {
+      pairingIndex: pairing.index,
+      roundNum,
+      prompter: pairing.modelA,
+      prompt: "",
+      modelA: pairing.modelA,
+      answerA: "",
+      modelB: pairing.modelB,
+      answerB: "",
+      votes: [],
+      votesA: 0,
+      votesB: 0,
+      winner: "tie",
+      error: "Not enough models for prompter/voters",
+    };
+  }
   const shuffledNon = shuffle([...nonContestants]);
   const prompter = shuffledNon[0]!;
   const voters = shuffledNon; // all non-contestants vote (including prompter)
