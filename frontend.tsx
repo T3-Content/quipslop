@@ -32,7 +32,7 @@ type RoundState = {
   scoreB?: number;
 };
 type GameState = {
-  completed: RoundState[];
+  lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
   done: boolean;
@@ -44,7 +44,7 @@ type BetState = {
   open: boolean;
   totals: Record<string, { count: number; total: number }>;
 };
-type ServerMessage = {
+type StateMessage = {
   type: "state";
   data: GameState;
   totalRounds: number;
@@ -52,6 +52,11 @@ type ServerMessage = {
   version?: string;
   betState: BetState | null;
 };
+type ViewerCountMessage = {
+  type: "viewerCount";
+  viewerCount: number;
+};
+type ServerMessage = StateMessage | ViewerCountMessage;
 
 // ── Model colors & logos ─────────────────────────────────────────────────────
 
@@ -738,6 +743,8 @@ function App() {
           setTotalRounds(msg.totalRounds);
           setViewerCount(msg.viewerCount);
           setBetState(msg.betState);
+        } else if (msg.type === "viewerCount") {
+          setViewerCount(msg.viewerCount);
         }
       };
     }
@@ -751,11 +758,10 @@ function App() {
 
   if (!connected || !state) return <ConnectingScreen />;
 
-  const lastCompleted = state.completed[state.completed.length - 1];
   const isNextPrompting =
     state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound =
-    isNextPrompting && lastCompleted ? lastCompleted : state.active;
+    isNextPrompting && state.lastCompleted ? state.lastCompleted : state.active;
 
   const handleJoin = (id: string, nick: string) => {
     setUserId(id);
@@ -826,7 +832,7 @@ function App() {
             </div>
           )}
 
-          {isNextPrompting && lastCompleted && (
+          {isNextPrompting && state.lastCompleted && (
             <div className="next-toast">
               <ModelTag model={state.active!.prompter} small /> is writing the
               next prompt

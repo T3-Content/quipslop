@@ -26,20 +26,25 @@ type RoundState = {
   scoreB?: number;
 };
 type GameState = {
-  completed: RoundState[];
+  lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
 };
-type ServerMessage = {
+type StateMessage = {
   type: "state";
   data: GameState;
   totalRounds: number;
   viewerCount: number;
   version?: string;
 };
+type ViewerCountMessage = {
+  type: "viewerCount";
+  viewerCount: number;
+};
+type ServerMessage = StateMessage | ViewerCountMessage;
 
 const MODEL_COLORS: Record<string, string> = {
   "Gemini 3.1 Pro": "#4285F4",
@@ -141,6 +146,8 @@ function setupWebSocket() {
             : null;
         viewerCount = msg.viewerCount;
         lastMessageAt = Date.now();
+      } else if (msg.type === "viewerCount") {
+        viewerCount = msg.viewerCount;
       }
     } catch {
       // Ignore malformed spectator payloads.
@@ -521,9 +528,8 @@ function draw() {
 
   drawScoreboard(state.scores);
   
-  const lastCompleted = state.completed[state.completed.length - 1];
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
-  const displayRound = isNextPrompting && lastCompleted ? lastCompleted : (state.active ?? lastCompleted ?? null);
+  const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);
 
   if (state.done) {
     drawDone(state.scores);

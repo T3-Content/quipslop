@@ -75,10 +75,6 @@ const gameState: GameState = {
 type WsData = { ip: string };
 
 const WINDOW_MS = 60_000;
-const WS_UPGRADE_LIMIT_PER_MIN = parsePositiveInt(
-  process.env.WS_UPGRADE_LIMIT_PER_MIN,
-  20,
-);
 const HISTORY_LIMIT_PER_MIN = parsePositiveInt(
   process.env.HISTORY_LIMIT_PER_MIN,
   120,
@@ -232,6 +228,17 @@ function setHistoryCache(key: string, body: string, expiresAt: number) {
 
 const clients = new Set<ServerWebSocket<WsData>>();
 
+function getClientState() {
+  return {
+    active: gameState.active,
+    lastCompleted: gameState.completed.at(-1) ?? null,
+    scores: gameState.scores,
+    done: gameState.done,
+    isPaused: gameState.isPaused,
+    generation: gameState.generation,
+  };
+}
+
 let betTotalsCache: { roundNum: number; totals: Record<string, { count: number; total: number }> } | null = null;
 
 function invalidateBetCache() {
@@ -256,11 +263,21 @@ function broadcast() {
 
   const msg = JSON.stringify({
     type: "state",
-    data: gameState,
+    data: getClientState(),
     totalRounds: runs,
     viewerCount: clients.size,
     version: VERSION,
     betState,
+  });
+  for (const ws of clients) {
+    ws.send(msg);
+  }
+}
+
+function broadcastViewerCount() {
+  const msg = JSON.stringify({
+    type: "viewerCount",
+    viewerCount: clients.size,
   });
   for (const ws of clients) {
     ws.send(msg);
@@ -317,6 +334,7 @@ const server = Bun.serve<WsData>({
         });
       }
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
+        log("WARN", "http", "Admin login rate limited", { ip });
         return new Response("Too Many Requests", { status: 429 });
       }
 
@@ -502,6 +520,7 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/api/history") {
       if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        log("WARN", "http", "History rate limited", { ip });
         return new Response("Too Many Requests", { status: 429 });
       }
       const rawPage = parseInt(url.searchParams.get("page") || "1", 10);
@@ -677,21 +696,27 @@ const server = Bun.serve<WsData>({
           headers: { Allow: "GET" },
         });
       }
-      if (
-        isRateLimited(`ws-upgrade:${ip}`, WS_UPGRADE_LIMIT_PER_MIN, WINDOW_MS)
-      ) {
-        return new Response("Too Many Requests", { status: 429 });
-      }
       if (clients.size >= MAX_WS_GLOBAL) {
+        log("WARN", "ws", "Global WS limit reached, rejecting", {
+          ip,
+          clients: clients.size,
+          limit: MAX_WS_GLOBAL,
+        });
         return new Response("Service Unavailable", { status: 503 });
       }
       const existingForIp = wsByIp.get(ip) ?? 0;
       if (existingForIp >= MAX_WS_PER_IP) {
+        log("WARN", "ws", "Per-IP WS limit reached, rejecting", {
+          ip,
+          existing: existingForIp,
+          limit: MAX_WS_PER_IP,
+        });
         return new Response("Too Many Requests", { status: 429 });
       }
 
       const upgraded = server.upgrade(req, { data: { ip } });
       if (!upgraded) {
+        log("WARN", "ws", "WebSocket upgrade failed", { ip });
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
       return undefined;
@@ -703,8 +728,26 @@ const server = Bun.serve<WsData>({
     data: {} as WsData,
     open(ws) {
       clients.add(ws);
-      wsByIp.set(ws.data.ip, (wsByIp.get(ws.data.ip) ?? 0) + 1);
-      broadcast();
+      const ipCount = (wsByIp.get(ws.data.ip) ?? 0) + 1;
+      wsByIp.set(ws.data.ip, ipCount);
+      log("INFO", "ws", "Client connected", {
+        ip: ws.data.ip,
+        ipConns: ipCount,
+        totalClients: clients.size,
+        uniqueIps: wsByIp.size,
+      });
+      // Send current state to the new client only
+      ws.send(
+        JSON.stringify({
+          type: "state",
+          data: getClientState(),
+          totalRounds: runs,
+          viewerCount: clients.size,
+          version: VERSION,
+        }),
+      );
+      // Notify everyone else with just the viewer count
+      broadcastViewerCount();
     },
     message(_ws, _message) {
       // Spectator-only, no client messages handled
@@ -712,7 +755,12 @@ const server = Bun.serve<WsData>({
     close(ws) {
       clients.delete(ws);
       decrementIpConnection(ws.data.ip);
-      broadcast();
+      log("INFO", "ws", "Client disconnected", {
+        ip: ws.data.ip,
+        totalClients: clients.size,
+        uniqueIps: wsByIp.size,
+      });
+      broadcastViewerCount();
     },
   },
   development:

@@ -106,9 +106,16 @@ export function log(
   const ts = new Date().toISOString();
   let line = `[${ts}] ${level} [${category}] ${message}`;
   if (data) {
-    line += "\n  " + JSON.stringify(data, null, 2).replace(/\n/g, "\n  ");
+    line += " " + JSON.stringify(data);
   }
   appendFileSync(LOG_FILE, line + "\n");
+  if (level === "ERROR") {
+    console.error(line);
+  } else if (level === "WARN") {
+    console.warn(line);
+  } else {
+    console.log(line);
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
