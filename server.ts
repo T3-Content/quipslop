@@ -594,6 +594,10 @@ const server = Bun.serve<WsData>({
         return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
 
+      if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0) {
+        return new Response(JSON.stringify({ error: "Invalid amount" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
       // Validate round is active and betting is open
       const active = gameState.active;
       if (!active || active.num !== roundNum) {

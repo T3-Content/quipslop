@@ -251,13 +251,14 @@ function BettingPanel({
 
   const handlePlace = async () => {
     if (!selected || amount <= 0) return;
+    const placedForRound = round.num;
     setPlacing(true);
     setError("");
     try {
       const res = await fetch("/api/bet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, roundNum: round.num, contestant: selected, amount }),
+        body: JSON.stringify({ userId, roundNum: placedForRound, contestant: selected, amount }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -265,9 +266,12 @@ function BettingPanel({
         setPlacing(false);
         return;
       }
-      setMyBet({ contestant: selected, amount });
-      onBalanceChange(data.balance);
-      localStorage.setItem("qs_balance", String(data.balance));
+      // Only update if we're still on the same round
+      if (lastRoundRef.current === placedForRound) {
+        setMyBet({ contestant: selected, amount });
+        onBalanceChange(data.balance);
+        localStorage.setItem("qs_balance", String(data.balance));
+      }
     } catch {
       setError("Network error");
     }
