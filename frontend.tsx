@@ -31,6 +31,9 @@ type RoundState = {
   votes: VoteInfo[];
   scoreA?: number;
   scoreB?: number;
+  viewerVotesA?: number;
+  viewerVotesB?: number;
+  viewerVotingEndsAt?: number;
 };
 type GameState = {
   lastCompleted: RoundState | null;
@@ -247,6 +250,8 @@ function ContestantCard({
   isWinner,
   showVotes,
   voters,
+  viewerVotes,
+  totalViewerVotes,
 }: {
   task: TaskInfo;
   voteCount: number;
@@ -254,9 +259,15 @@ function ContestantCard({
   isWinner: boolean;
   showVotes: boolean;
   voters: VoteInfo[];
+  viewerVotes?: number;
+  totalViewerVotes?: number;
 }) {
   const color = getColor(task.model.name);
   const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+  const showViewerVotes = showVotes && totalViewerVotes !== undefined && totalViewerVotes > 0;
+  const viewerPct = showViewerVotes && totalViewerVotes > 0
+    ? Math.round(((viewerVotes ?? 0) / totalViewerVotes) * 100)
+    : 0;
 
   return (
     <div
@@ -319,6 +330,25 @@ function ContestantCard({
               })}
             </span>
           </div>
+          {showViewerVotes && (
+            <>
+              <div className="vote-bar viewer-vote-bar">
+                <div
+                  className="vote-bar__fill viewer-vote-bar__fill"
+                  style={{ width: `${viewerPct}%` }}
+                />
+              </div>
+              <div className="vote-meta viewer-vote-meta">
+                <span className="vote-meta__count viewer-vote-meta__count">
+                  {viewerVotes ?? 0}
+                </span>
+                <span className="vote-meta__label">
+                  viewer vote{(viewerVotes ?? 0) !== 1 ? "s" : ""}
+                </span>
+                <span className="viewer-vote-meta__icon">👥</span>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -327,7 +357,17 @@ function ContestantCard({
 
 // ── Arena ─────────────────────────────────────────────────────────────────────
 
-function Arena({ round, total, isShowingPrevious }: { round: RoundState; total: number | null; isShowingPrevious?: boolean }) {
+function Arena({
+  round,
+  total,
+  viewerVotingSecondsLeft,
+  isShowingPrevious,
+}: {
+  round: RoundState;
+  total: number | null;
+  viewerVotingSecondsLeft: number;
+  isShowingPrevious?: boolean;
+}) {
   const [contA, contB] = round.contestants;
   const showVotes = round.phase === "voting" || round.phase === "done";
   const isDone = round.phase === "done";
@@ -341,6 +381,9 @@ function Arena({ round, total, isShowingPrevious }: { round: RoundState; total: 
   const totalVotes = votesA + votesB;
   const votersA = round.votes.filter((v) => v.votedFor?.name === contA.name);
   const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
+  const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
+
+  const showCountdown = round.phase === "voting" && viewerVotingSecondsLeft > 0;
 
   const phaseText =
     round.phase === "prompting"
@@ -358,8 +401,18 @@ function Arena({ round, total, isShowingPrevious }: { round: RoundState; total: 
           Round {round.num}
           {total ? <span className="dim">/{total}</span> : null}
         </span>
-        <span className="arena__phase">{phaseText}</span>
+        <span className="arena__phase">
+          {phaseText}
+          {showCountdown && (
+            <span className="vote-countdown">{viewerVotingSecondsLeft}s</span>
+          )}
+        </span>
       </div>
+      {showCountdown && (
+        <div className="vote-hint">
+          Vote in Twitch chat: <strong>1</strong> for left, <strong>2</strong> for right.
+        </div>
+      )}
 
       <PhaseTimer round={round} isShowingPrevious={!!isShowingPrevious} />
 
@@ -374,6 +427,8 @@ function Arena({ round, total, isShowingPrevious }: { round: RoundState; total: 
             isWinner={isDone && votesA > votesB}
             showVotes={showVotes}
             voters={votersA}
+            viewerVotes={round.viewerVotesA}
+            totalViewerVotes={totalViewerVotes}
           />
           <ContestantCard
             task={round.answerTasks[1]}
@@ -382,6 +437,8 @@ function Arena({ round, total, isShowingPrevious }: { round: RoundState; total: 
             isWinner={isDone && votesB > votesA}
             showVotes={showVotes}
             voters={votersB}
+            viewerVotes={round.viewerVotesB}
+            totalViewerVotes={totalViewerVotes}
           />
         </div>
       )}
@@ -506,6 +563,24 @@ function App() {
   const [totalRounds, setTotalRounds] = useState<number | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [viewerVotingSecondsLeft, setViewerVotingSecondsLeft] = useState(0);
+
+  // Countdown timer for viewer voting
+  useEffect(() => {
+    const endsAt = state?.active?.viewerVotingEndsAt;
+    if (!endsAt || state?.active?.phase !== "voting") {
+      setViewerVotingSecondsLeft(0);
+      return;
+    }
+
+    function tick() {
+      const remaining = Math.max(0, Math.ceil((endsAt! - Date.now()) / 1000));
+      setViewerVotingSecondsLeft(remaining);
+    }
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [state?.active?.viewerVotingEndsAt, state?.active?.phase]);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -578,7 +653,12 @@ function App() {
           {state.done ? (
             <GameOver scores={state.scores} />
           ) : displayRound ? (
-            <Arena round={displayRound} total={totalRounds} isShowingPrevious={isNextPrompting && !!state.lastCompleted} />
+            <Arena
+              round={displayRound}
+              total={totalRounds}
+              viewerVotingSecondsLeft={viewerVotingSecondsLeft}
+              isShowingPrevious={isNextPrompting && !!state.lastCompleted}
+            />
           ) : (
             <div className="waiting">
               Starting

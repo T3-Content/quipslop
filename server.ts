@@ -74,6 +74,9 @@ const ADMIN_LIMIT_PER_MIN = parsePositiveInt(
 );
 const MAX_WS_GLOBAL = parsePositiveInt(process.env.MAX_WS_GLOBAL, 100_000);
 const MAX_WS_PER_IP = parsePositiveInt(process.env.MAX_WS_PER_IP, 8);
+const MAX_WS_NEW_PER_SEC = parsePositiveInt(process.env.MAX_WS_NEW_PER_SEC, 50);
+let wsNewConnections = 0;
+let wsNewConnectionsResetAt = Date.now() + 1000;
 const MAX_HISTORY_PAGE = parsePositiveInt(
   process.env.MAX_HISTORY_PAGE,
   100_000,
@@ -86,6 +89,18 @@ const HISTORY_CACHE_TTL_MS = parsePositiveInt(
 const MAX_HISTORY_CACHE_KEYS = parsePositiveInt(
   process.env.MAX_HISTORY_CACHE_KEYS,
   500,
+);
+const FOSSABOT_CHANNEL_LOGIN = (
+  process.env.FOSSABOT_CHANNEL_LOGIN ?? "quipslop"
+).trim().toLowerCase();
+const FOSSABOT_VOTE_SECRET = process.env.FOSSABOT_VOTE_SECRET ?? "";
+const FOSSABOT_VALIDATE_TIMEOUT_MS = parsePositiveInt(
+  process.env.FOSSABOT_VALIDATE_TIMEOUT_MS,
+  1_500,
+);
+const VIEWER_VOTE_BROADCAST_DEBOUNCE_MS = parsePositiveInt(
+  process.env.VIEWER_VOTE_BROADCAST_DEBOUNCE_MS,
+  250,
 );
 const ADMIN_COOKIE = "quipslop_admin";
 const ADMIN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -101,10 +116,41 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function isPrivateIp(ip: string): boolean {
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (v4 === "127.0.0.1" || ip === "::1") return true;
+  if (v4.startsWith("10.")) return true;
+  if (v4.startsWith("192.168.")) return true;
+  // CGNAT range (RFC 6598) — used by Railway's internal proxy
+  if (v4.startsWith("100.")) {
+    const second = parseInt(v4.split(".")[1] ?? "", 10);
+    if (second >= 64 && second <= 127) return true;
+  }
+  if (ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  if (v4.startsWith("172.")) {
+    const second = parseInt(v4.split(".")[1] ?? "", 10);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
 function getClientIp(req: Request, server: Bun.Server<WsData>): string {
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
-  return server.requestIP(req)?.address ?? "unknown";
+  const socketIp = server.requestIP(req)?.address ?? "unknown";
+
+  // Only trust proxy headers when the direct connection comes from
+  // a private IP (i.e. Railway's edge proxy). Direct public connections
+  // cannot spoof their IP this way.
+  if (socketIp !== "unknown" && isPrivateIp(socketIp)) {
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) {
+      const rightmost = xff.split(",").at(-1)?.trim();
+      if (rightmost && !isPrivateIp(rightmost)) {
+        return rightmost.startsWith("::ffff:") ? rightmost.slice(7) : rightmost;
+      }
+    }
+  }
+
+  return socketIp.startsWith("::ffff:") ? socketIp.slice(7) : socketIp;
 }
 
 function isRateLimited(key: string, limit: number, windowMs: number): boolean {
@@ -215,9 +261,88 @@ function setHistoryCache(key: string, body: string, expiresAt: number) {
   historyCache.set(key, { body, expiresAt });
 }
 
+type ViewerVoteSide = "A" | "B";
+
+function isValidFossabotValidateUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return (
+      url.protocol === "https:" &&
+      url.host === "api.fossabot.com" &&
+      url.pathname.startsWith("/v2/customapi/validate/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function validateFossabotRequest(validateUrl: string): Promise<boolean> {
+  if (!isValidFossabotValidateUrl(validateUrl)) {
+    return false;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    FOSSABOT_VALIDATE_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetch(validateUrl, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!res.ok) return false;
+
+    const body = (await res.json().catch(() => null)) as
+      | { context_url?: unknown }
+      | null;
+    return Boolean(body && typeof body.context_url === "string");
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function applyViewerVote(voterId: string, side: ViewerVoteSide): boolean {
+  const round = gameState.active;
+  if (!round || round.phase !== "voting") return false;
+  if (!round.viewerVotingEndsAt || Date.now() > round.viewerVotingEndsAt) {
+    return false;
+  }
+
+  const previousVote = viewerVoters.get(voterId);
+  if (previousVote === side) return false;
+
+  // Undo previous vote if this viewer switched sides.
+  if (previousVote === "A") {
+    round.viewerVotesA = Math.max(0, (round.viewerVotesA ?? 0) - 1);
+  } else if (previousVote === "B") {
+    round.viewerVotesB = Math.max(0, (round.viewerVotesB ?? 0) - 1);
+  }
+
+  viewerVoters.set(voterId, side);
+  if (side === "A") {
+    round.viewerVotesA = (round.viewerVotesA ?? 0) + 1;
+  } else {
+    round.viewerVotesB = (round.viewerVotesB ?? 0) + 1;
+  }
+  return true;
+}
+
 // ── WebSocket clients ───────────────────────────────────────────────────────
 
 const clients = new Set<ServerWebSocket<WsData>>();
+const viewerVoters = new Map<string, "A" | "B">();
+let viewerVoteBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleViewerVoteBroadcast() {
+  if (viewerVoteBroadcastTimer) return;
+  viewerVoteBroadcastTimer = setTimeout(() => {
+    viewerVoteBroadcastTimer = null;
+    broadcast();
+  }, VIEWER_VOTE_BROADCAST_DEBOUNCE_MS);
+}
 
 function getClientState() {
   return {
@@ -243,14 +368,19 @@ function broadcast() {
   }
 }
 
+let viewerCountTimer: ReturnType<typeof setTimeout> | null = null;
 function broadcastViewerCount() {
-  const msg = JSON.stringify({
-    type: "viewerCount",
-    viewerCount: clients.size,
-  });
-  for (const ws of clients) {
-    ws.send(msg);
-  }
+  if (viewerCountTimer) return;
+  viewerCountTimer = setTimeout(() => {
+    viewerCountTimer = null;
+    const msg = JSON.stringify({
+      type: "viewerCount",
+      viewerCount: clients.size,
+    });
+    for (const ws of clients) {
+      ws.send(msg);
+    }
+  }, 15_000);
 }
 
 function getAdminSnapshot() {
@@ -293,6 +423,82 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/healthz") {
       return new Response("ok", { status: 200 });
+    }
+
+    if (
+      url.pathname === "/api/fossabot/vote/1" ||
+      url.pathname === "/api/fossabot/vote/2"
+    ) {
+      if (req.method !== "GET") {
+        return new Response("", {
+          status: 405,
+          headers: { Allow: "GET" },
+        });
+      }
+      if (!FOSSABOT_VOTE_SECRET) {
+        log("ERROR", "vote:fossabot", "FOSSABOT_VOTE_SECRET is not configured");
+        return new Response("", { status: 503 });
+      }
+
+      const providedSecret = url.searchParams.get("secret") ?? "";
+      if (!providedSecret || !secureCompare(providedSecret, FOSSABOT_VOTE_SECRET)) {
+        log("WARN", "vote:fossabot", "Rejected due to missing/invalid secret", {
+          ip,
+        });
+        return new Response("", { status: 401 });
+      }
+
+      const channelProvider = req.headers
+        .get("x-fossabot-channelprovider")
+        ?.trim()
+        .toLowerCase();
+      const channelLogin = req.headers
+        .get("x-fossabot-channellogin")
+        ?.trim()
+        .toLowerCase();
+      if (channelProvider !== "twitch" || channelLogin !== FOSSABOT_CHANNEL_LOGIN) {
+        log("WARN", "vote:fossabot", "Rejected due to channel/provider mismatch", {
+          ip,
+          channelProvider,
+          channelLogin,
+        });
+        return new Response("", { status: 403 });
+      }
+
+      const validateUrl = req.headers.get("x-fossabot-validateurl") ?? "";
+      const isValid = await validateFossabotRequest(validateUrl);
+      if (!isValid) {
+        log("WARN", "vote:fossabot", "Validation check failed", { ip });
+        return new Response("", { status: 401 });
+      }
+
+      const userProvider = req.headers
+        .get("x-fossabot-message-userprovider")
+        ?.trim()
+        .toLowerCase();
+      if (userProvider && userProvider !== "twitch") {
+        return new Response("", { status: 403 });
+      }
+
+      const userProviderId = req.headers
+        .get("x-fossabot-message-userproviderid")
+        ?.trim();
+      if (!userProviderId) {
+        log("WARN", "vote:fossabot", "Missing user provider ID", { ip });
+        return new Response("", { status: 400 });
+      }
+
+      const votedFor: ViewerVoteSide = url.pathname.endsWith("/1") ? "A" : "B";
+      const applied = applyViewerVote(userProviderId, votedFor);
+      if (applied) {
+        scheduleViewerVoteBroadcast();
+      }
+      return new Response("", {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      });
     }
 
     if (url.pathname === "/api/admin/login") {
@@ -535,6 +741,14 @@ const server = Bun.serve<WsData>({
           headers: { Allow: "GET" },
         });
       }
+      const now = Date.now();
+      if (now >= wsNewConnectionsResetAt) {
+        wsNewConnections = 0;
+        wsNewConnectionsResetAt = now + 1000;
+      }
+      if (wsNewConnections >= MAX_WS_NEW_PER_SEC) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
       if (clients.size >= MAX_WS_GLOBAL) {
         log("WARN", "ws", "Global WS limit reached, rejecting", {
           ip,
@@ -558,6 +772,7 @@ const server = Bun.serve<WsData>({
         log("WARN", "ws", "WebSocket upgrade failed", { ip });
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
+      wsNewConnections++;
       return undefined;
     }
 
@@ -588,8 +803,8 @@ const server = Bun.serve<WsData>({
       // Notify everyone else with just the viewer count
       broadcastViewerCount();
     },
-    message(_ws, _message) {
-      // Spectator-only, no client messages handled
+    message() {
+      // Viewer voting moved to Twitch chat via Fossabot.
     },
     close(ws) {
       clients.delete(ws);
@@ -629,6 +844,8 @@ log("INFO", "server", `Web server started on port ${server.port}`, {
 
 // ── Start game ──────────────────────────────────────────────────────────────
 
-runGame(runs, gameState, broadcast).then(() => {
+runGame(runs, gameState, broadcast, () => {
+  viewerVoters.clear();
+}).then(() => {
   console.log(`\n✅ Game complete! Log: ${LOG_FILE}`);
 });

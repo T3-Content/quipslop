@@ -228,6 +228,27 @@ body {
   border-radius: 2px;
 }
 
+/* ── Viewer Votes ────────────────────────────────────────────── */
+
+.history-contestant__viewer-votes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.history-contestant__viewer-icon {
+  font-size: 13px;
+}
+
+.history-contestant__viewer-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 /* ── Pagination ───────────────────────────────────────────────── */
 .pagination {
   display: flex;

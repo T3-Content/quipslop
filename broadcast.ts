@@ -25,6 +25,9 @@ type RoundState = {
   votes: VoteInfo[];
   scoreA?: number;
   scoreB?: number;
+  viewerVotesA?: number;
+  viewerVotesB?: number;
+  viewerVotingEndsAt?: number;
 };
 type GameState = {
   lastCompleted: RoundState | null;
@@ -192,15 +195,53 @@ function textLines(
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
+  const maxChunkLength = 1;
+
+  const splitWordToFit = (word: string): string[] => {
+    if (!word) return [];
+    if (ctx.measureText(word).width <= maxWidth) return [word];
+
+    const pieces: string[] = [];
+    let remaining = word;
+    while (remaining.length > 0) {
+      let low = maxChunkLength;
+      let high = remaining.length;
+      let best = maxChunkLength;
+
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const candidate = remaining.slice(0, mid);
+        if (ctx.measureText(candidate).width <= maxWidth) {
+          best = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      pieces.push(remaining.slice(0, best));
+      remaining = remaining.slice(best);
+    }
+
+    return pieces;
+  };
 
   for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (ctx.measureText(candidate).width <= maxWidth) {
-      current = candidate;
-      continue;
+    const segments = splitWordToFit(word);
+    let isFirstSegment = true;
+    for (const segment of segments) {
+      const prefix = isFirstSegment && current ? " " : "";
+      const candidate = current ? `${current}${prefix}${segment}` : segment;
+      if (ctx.measureText(candidate).width <= maxWidth) {
+        current = candidate;
+        isFirstSegment = false;
+        continue;
+      }
+      if (current) lines.push(current);
+      current = segment;
+      isFirstSegment = false;
+      if (lines.length >= maxLines - 1) break;
     }
-    if (current) lines.push(current);
-    current = word;
     if (lines.length >= maxLines - 1) break;
   }
 
@@ -304,7 +345,7 @@ function drawScoreboard(scores: Record<string, number>) {
 function drawRound(round: RoundState) {
   const mainW = WIDTH - 380;
 
-  const phaseLabel =
+  let phaseLabel =
     (round.phase === "prompting"
       ? "Writing prompt"
       : round.phase === "answering"
@@ -314,6 +355,12 @@ function drawRound(round: RoundState) {
           : "Complete"
     ).toUpperCase();
 
+  // Append countdown during voting phase
+  let countdownSeconds = 0;
+  if (round.phase === "voting" && round.viewerVotingEndsAt) {
+    countdownSeconds = Math.max(0, Math.ceil((round.viewerVotingEndsAt - Date.now()) / 1000));
+  }
+
   ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const totalText = totalRounds !== null ? `/${totalRounds}` : "";
@@ -322,6 +369,13 @@ function drawRound(round: RoundState) {
   ctx.fillStyle = "#888";
   const labelWidth = ctx.measureText(phaseLabel).width;
   ctx.fillText(phaseLabel, mainW - 64 - labelWidth, 150);
+
+  if (countdownSeconds > 0) {
+    const countdownText = `${countdownSeconds}S`;
+    ctx.fillStyle = "#ededed";
+    const cdWidth = ctx.measureText(countdownText).width;
+    ctx.fillText(countdownText, mainW - 64 - labelWidth - cdWidth - 12, 150);
+  }
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
@@ -446,30 +500,38 @@ function drawContestantCard(
     const totalVotes = votesA + votesB;
     const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
 
-    roundRect(x + 24, y + h - 60, w - 48, 4, 2, "#1c1c1c");
+    const viewerVoteCount = isFirst ? (round.viewerVotesA ?? 0) : (round.viewerVotesB ?? 0);
+    const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
+    const hasViewerVotes = totalViewerVotes > 0;
+
+    // Shift model votes up when viewer votes are present
+    const modelVoteBarY = hasViewerVotes ? y + h - 110 : y + h - 60;
+    const modelVoteTextY = hasViewerVotes ? y + h - 74 : y + h - 24;
+
+    roundRect(x + 24, modelVoteBarY, w - 48, 4, 2, "#1c1c1c");
     if (pct > 0) {
-      roundRect(x + 24, y + h - 60, Math.max(8, ((w - 48) * pct) / 100), 4, 2, color);
+      roundRect(x + 24, modelVoteBarY, Math.max(8, ((w - 48) * pct) / 100), 4, 2, color);
     }
 
     ctx.font = '700 28px "JetBrains Mono", monospace';
     ctx.fillStyle = color;
-    ctx.fillText(String(voteCount), x + 24, y + h - 24);
+    ctx.fillText(String(voteCount), x + 24, modelVoteTextY);
 
     ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#444";
     const vTxt = `vote${voteCount === 1 ? "" : "s"}`;
     const vCountW = ctx.measureText(String(voteCount)).width;
     const vTxtW = ctx.measureText(vTxt).width;
-    ctx.fillText(vTxt, x + 24 + vCountW + 8, y + h - 25);
+    ctx.fillText(vTxt, x + 24 + vCountW + 8, modelVoteTextY - 1);
 
     let avatarX = x + 24 + vCountW + 8 + vTxtW + 16;
-    const avatarY = y + h - 48;
+    const avatarY = modelVoteBarY + 12;
     const avatarSize = 28;
 
     for (const v of taskVoters) {
       const vColor = getColor(v.voter.name);
       const drewLogo = drawModelLogo(v.voter.name, avatarX, avatarY, avatarSize);
-      
+
       if (!drewLogo) {
         ctx.beginPath();
         ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
@@ -481,8 +543,28 @@ function drawContestantCard(
         const tw = ctx.measureText(initial).width;
         ctx.fillText(initial, avatarX + avatarSize / 2 - tw / 2, avatarY + avatarSize / 2 + 4);
       }
-      
+
       avatarX += avatarSize + 8;
+    }
+
+    // Viewer votes
+    if (hasViewerVotes) {
+      const viewerPct = Math.round((viewerVoteCount / totalViewerVotes) * 100);
+
+      roundRect(x + 24, y + h - 56, w - 48, 4, 2, "#1c1c1c");
+      if (viewerPct > 0) {
+        roundRect(x + 24, y + h - 56, Math.max(8, ((w - 48) * viewerPct) / 100), 4, 2, "#666");
+      }
+
+      ctx.font = '700 22px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#999";
+      ctx.fillText(String(viewerVoteCount), x + 24, y + h - 22);
+
+      const vvCountW = ctx.measureText(String(viewerVoteCount)).width;
+      ctx.font = '600 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#444";
+      const vvTxt = `viewer vote${viewerVoteCount === 1 ? "" : "s"}`;
+      ctx.fillText(vvTxt, x + 24 + vvCountW + 8, y + h - 23);
     }
   }
 }

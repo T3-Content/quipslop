@@ -188,6 +188,19 @@ body {
   flex-shrink: 0;
 }
 
+.vote-hint {
+  margin: -10px 0 22px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.vote-hint strong {
+  color: var(--text);
+}
+
 /* ── Prompt ───────────────────────────────────────────────────── */
 
 .prompt {
@@ -367,6 +380,70 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ── Votable Contestant ──────────────────────────────────────── */
+
+.contestant--votable {
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.contestant--votable:hover {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.contestant--votable:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── My Vote Highlight ──────────────────────────────────────── */
+
+.contestant--my-vote {
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.my-vote-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--text-muted);
+  color: var(--text-dim);
+  border-radius: 3px;
+}
+
+/* ── Viewer Votes ────────────────────────────────────────────── */
+
+.viewer-vote-bar {
+  margin-top: 4px;
+}
+
+.viewer-vote-bar__fill {
+  background: #666 !important;
+}
+
+.viewer-vote-meta {
+  color: var(--text-muted);
+}
+
+.viewer-vote-meta__count {
+  color: #999 !important;
+}
+
+.viewer-vote-meta__icon {
+  margin-left: auto;
+  font-size: 14px;
+}
+
+
+.vote-countdown {
+  color: var(--text);
+  font-weight: 700;
+  margin-left: 8px;
 }
 
 /* ── Tie ──────────────────────────────────────────────────────── */
