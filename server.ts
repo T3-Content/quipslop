@@ -4,7 +4,18 @@ import indexHtml from "./index.html";
 import historyHtml from "./history.html";
 import adminHtml from "./admin.html";
 import broadcastHtml from "./broadcast.html";
-import { clearAllRounds, getRounds, getAllRounds } from "./db.ts";
+import {
+  clearAllRounds,
+  getRounds,
+  getAllRounds,
+  createUser,
+  getUser,
+  placeBet,
+  getLeaderboard,
+  getBetsForRound,
+  getUserBetForRound,
+  clearAllBets,
+} from "./db.ts";
 import {
   MODELS,
   LOG_FILE,
@@ -230,13 +241,35 @@ function getClientState() {
   };
 }
 
+let betTotalsCache: { roundNum: number; totals: Record<string, { count: number; total: number }> } | null = null;
+
+function invalidateBetCache() {
+  betTotalsCache = null;
+}
+
 function broadcast() {
+  let betState: { roundNum: number; open: boolean; totals: Record<string, { count: number; total: number }> } | null = null;
+  const active = gameState.active;
+  if (active) {
+    const open = active.phase === "prompting" || active.phase === "answering";
+    // Use cached totals if same round, otherwise refresh
+    if (!betTotalsCache || betTotalsCache.roundNum !== active.num) {
+      betTotalsCache = { roundNum: active.num, totals: getBetsForRound(active.num) };
+    }
+    betState = {
+      roundNum: active.num,
+      open,
+      totals: betTotalsCache.totals,
+    };
+  }
+
   const msg = JSON.stringify({
     type: "state",
     data: getClientState(),
     totalRounds: runs,
     viewerCount: clients.size,
     version: VERSION,
+    betState,
   });
   for (const ws of clients) {
     ws.send(msg);
@@ -425,6 +458,8 @@ const server = Bun.serve<WsData>({
       }
 
       clearAllRounds();
+      clearAllBets();
+      invalidateBetCache();
       historyCache.clear();
       gameState.completed = [];
       gameState.active = null;
@@ -525,6 +560,134 @@ const server = Bun.serve<WsData>({
           "Cache-Control": "public, max-age=5, stale-while-revalidate=30",
           "X-Content-Type-Options": "nosniff",
         },
+      });
+    }
+
+    // ── Betting endpoints ───────────────────────────────────────────────────
+
+    if (url.pathname === "/api/register") {
+      if (req.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      if (isRateLimited(`register:${ip}`, 5, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+
+      let id = "", nickname = "";
+      try {
+        const body = await req.json();
+        id = String((body as Record<string, unknown>).id ?? "").trim();
+        nickname = String((body as Record<string, unknown>).nickname ?? "").trim()
+          .normalize("NFKC")
+          .replace(/[\x00-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, ""); // strip control/zero-width chars
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      if (!id || !nickname) {
+        return new Response(JSON.stringify({ error: "id and nickname required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (nickname.length < 1 || nickname.length > 20) {
+        return new Response(JSON.stringify({ error: "Nickname must be 1-20 characters" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      try {
+        const user = createUser(id, nickname);
+        return new Response(JSON.stringify({ ok: true, user }), { status: 200, headers: { "Content-Type": "application/json" } });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("UNIQUE")) {
+          if (msg.includes("users.id")) {
+            // Same client re-registering — return their existing record
+            const existing = getUser(id);
+            if (existing) {
+              return new Response(JSON.stringify({ ok: true, user: existing }), { status: 200, headers: { "Content-Type": "application/json" } });
+            }
+          }
+          return new Response(JSON.stringify({ error: "Nickname taken" }), { status: 409, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+    }
+
+    if (url.pathname === "/api/bet") {
+      if (req.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      if (isRateLimited(`bet:${ip}`, 30, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+
+      let userId = "", roundNum = 0, contestant = "", amount = 0;
+      try {
+        const body = await req.json();
+        const b = body as Record<string, unknown>;
+        userId = String(b.userId ?? "");
+        roundNum = Number(b.roundNum ?? 0);
+        contestant = String(b.contestant ?? "");
+        amount = Number(b.amount ?? 0);
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0) {
+        return new Response(JSON.stringify({ error: "Invalid amount" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      // Validate round is active and betting is open
+      const active = gameState.active;
+      if (!active || active.num !== roundNum) {
+        return new Response(JSON.stringify({ error: "Round not active" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (active.phase !== "prompting" && active.phase !== "answering") {
+        return new Response(JSON.stringify({ error: "Betting closed" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      // Validate contestant is in this round
+      const validContestants: string[] = [active.contestants[0].name, active.contestants[1].name];
+      if (!validContestants.includes(contestant)) {
+        return new Response(JSON.stringify({ error: "Invalid contestant" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      try {
+        const result = placeBet(userId, roundNum, contestant, amount);
+        invalidateBetCache();
+        broadcast(); // update bet totals for all viewers
+        return new Response(JSON.stringify({ ok: true, bet: result.bet, balance: result.balance }), { status: 200, headers: { "Content-Type": "application/json" } });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return new Response(JSON.stringify({ error: msg }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+    }
+
+    if (url.pathname === "/api/leaderboard") {
+      if (isRateLimited(`leaderboard:${ip}`, 30, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      const board = getLeaderboard(10);
+      return new Response(JSON.stringify(board), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=5" },
+      });
+    }
+
+    if (url.pathname === "/api/me") {
+      if (isRateLimited(`me:${ip}`, 30, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      const userId = url.searchParams.get("id") ?? "";
+      if (!userId) {
+        return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      const user = getUser(userId);
+      if (!user) {
+        return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
+      }
+      const activeRound = gameState.active;
+      const currentBet = activeRound ? getUserBetForRound(userId, activeRound.num) : null;
+      return new Response(JSON.stringify({ user, currentBet }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 

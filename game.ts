@@ -260,7 +260,7 @@ export async function callVote(
   return cleaned.startsWith("A") ? "A" : "B";
 }
 
-import { saveRound } from "./db.ts";
+import { saveRound, resolveBets } from "./db.ts";
 
 // ── Game loop ───────────────────────────────────────────────────────────────
 
@@ -453,8 +453,18 @@ export async function runGame(
     round.phase = "done";
     if (votesA > votesB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
+      try { resolveBets(r, contA.name); } catch (e) {
+        log("ERROR", "betting", `Failed to resolve bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
     } else if (votesB > votesA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
+      try { resolveBets(r, contB.name); } catch (e) {
+        log("ERROR", "betting", `Failed to resolve bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
+    } else {
+      try { resolveBets(r, null); } catch (e) {
+        log("ERROR", "betting", `Failed to refund bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
     rerender();
 

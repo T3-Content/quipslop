@@ -39,12 +39,18 @@ type GameState = {
   isPaused: boolean;
   generation: number;
 };
+type BetState = {
+  roundNum: number;
+  open: boolean;
+  totals: Record<string, { count: number; total: number }>;
+};
 type StateMessage = {
   type: "state";
   data: GameState;
   totalRounds: number;
   viewerCount: number;
   version?: string;
+  betState: BetState | null;
 };
 type ViewerCountMessage = {
   type: "viewerCount";
@@ -106,6 +112,271 @@ function ModelTag({ model, small }: { model: Model; small?: boolean }) {
       {logo && <img src={logo} alt="" className="model-tag__logo" />}
       {model.name}
     </span>
+  );
+}
+
+// ── Nickname Modal ──────────────────────────────────────────────────────────
+
+function NicknameModal({ onJoin }: { onJoin: (id: string, nickname: string) => void }) {
+  const [nickname, setNickname] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = nickname.trim();
+    if (!trimmed || trimmed.length > 20) {
+      setError("1-20 characters");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    const id = crypto.randomUUID();
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, nickname: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed");
+        setLoading(false);
+        return;
+      }
+      localStorage.setItem("qs_userId", data.user.id);
+      localStorage.setItem("qs_nickname", data.user.nickname);
+      localStorage.setItem("qs_balance", String(data.user.balance));
+      onJoin(data.user.id, data.user.nickname);
+    } catch {
+      setError("Network error");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="nickname-modal">
+      <form className="nickname-modal__card" onSubmit={handleSubmit}>
+        <div className="nickname-modal__title">Join the Betting Pool</div>
+        <div className="nickname-modal__sub">Pick a nickname to start betting with 1,000 coins</div>
+        <input
+          className="nickname-modal__input"
+          type="text"
+          placeholder="Your nickname"
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
+          maxLength={20}
+          autoFocus
+        />
+        {error && <div className="nickname-modal__error">{error}</div>}
+        <button className="nickname-modal__btn" type="submit" disabled={loading}>
+          {loading ? "Joining..." : "Join"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ── Betting Panel ────────────────────────────────────────────────────────────
+
+function BettingPanel({
+  round,
+  betState,
+  userId,
+  balance,
+  onBalanceChange,
+}: {
+  round: RoundState;
+  betState: BetState | null;
+  userId: string;
+  balance: number;
+  onBalanceChange: (b: number) => void;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [amount, setAmount] = useState(50);
+  const [myBet, setMyBet] = useState<{ contestant: string; amount: number } | null>(null);
+  const [error, setError] = useState("");
+  const [placing, setPlacing] = useState(false);
+  const lastRoundRef = React.useRef<number>(0);
+
+  // Reset when round changes
+  useEffect(() => {
+    if (round.num !== lastRoundRef.current) {
+      lastRoundRef.current = round.num;
+      setMyBet(null);
+      setSelected(null);
+      setError("");
+      // Check if we already bet this round
+      if (userId) {
+        fetch(`/api/me?id=${encodeURIComponent(userId)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.currentBet) {
+              setMyBet({ contestant: data.currentBet.contestant, amount: data.currentBet.amount });
+            }
+            if (data.user) {
+              onBalanceChange(data.user.balance);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  }, [round.num, userId, onBalanceChange]);
+
+  const isOpen = betState?.open && round.num === betState.roundNum;
+  const [contA, contB] = round.contestants;
+
+  if (myBet) {
+    return (
+      <div className="betting-panel betting-panel--placed">
+        <div className="betting-panel__placed">
+          Your bet: <strong>{myBet.amount}</strong> coins on{" "}
+          <ModelTag model={{ id: myBet.contestant, name: myBet.contestant }} small />
+        </div>
+        {betState && (
+          <div className="betting-panel__pools">
+            {[contA, contB].map(c => {
+              const t = betState.totals[c.name];
+              return (
+                <div key={c.name} className="betting-panel__pool">
+                  <ModelTag model={c} small />
+                  <span className="betting-panel__pool-stat">
+                    {t ? `${t.count} bet${t.count !== 1 ? "s" : ""} · ${t.total} coins` : "No bets"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!isOpen) return null;
+
+  const handlePlace = async () => {
+    if (!selected || amount <= 0) return;
+    const placedForRound = round.num;
+    setPlacing(true);
+    setError("");
+    try {
+      const res = await fetch("/api/bet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, roundNum: placedForRound, contestant: selected, amount }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed");
+        setPlacing(false);
+        return;
+      }
+      // Only update if we're still on the same round
+      if (lastRoundRef.current === placedForRound) {
+        setMyBet({ contestant: selected, amount });
+        onBalanceChange(data.balance);
+        localStorage.setItem("qs_balance", String(data.balance));
+      }
+    } catch {
+      setError("Network error");
+    }
+    setPlacing(false);
+  };
+
+  return (
+    <div className="betting-panel">
+      <div className="betting-panel__title">Place Your Bet</div>
+      <div className="betting-panel__options">
+        {[contA, contB].map(c => (
+          <button
+            key={c.name}
+            className={`bet-option ${selected === c.name ? "bet-option--selected" : ""}`}
+            style={{ "--accent": getColor(c.name) } as React.CSSProperties}
+            onClick={() => setSelected(c.name)}
+          >
+            <ModelTag model={c} small />
+            {betState?.totals[c.name] && (() => {
+              const t = betState.totals[c.name]!;
+              return (
+                <span className="bet-option__pool">
+                  {t.count} bet{t.count !== 1 ? "s" : ""}
+                </span>
+              );
+            })()}
+          </button>
+        ))}
+      </div>
+      <div className="bet-input">
+        <div className="bet-input__presets">
+          {[10, 50, 100].map(v => (
+            <button
+              key={v}
+              className={`bet-input__preset ${amount === v ? "bet-input__preset--active" : ""}`}
+              onClick={() => setAmount(v)}
+            >
+              {v}
+            </button>
+          ))}
+          <button
+            className={`bet-input__preset ${amount === balance ? "bet-input__preset--active" : ""}`}
+            onClick={() => setAmount(balance)}
+          >
+            ALL IN
+          </button>
+        </div>
+        <input
+          className="bet-input__field"
+          type="number"
+          min={1}
+          max={balance}
+          value={amount}
+          onChange={e => setAmount(Math.max(1, Math.min(balance, parseInt(e.target.value) || 0)))}
+        />
+      </div>
+      {error && <div className="betting-panel__error">{error}</div>}
+      <button
+        className="betting-panel__confirm"
+        disabled={!selected || amount <= 0 || amount > balance || placing}
+        onClick={handlePlace}
+      >
+        {placing ? "Placing..." : `Bet ${amount} coins`}
+      </button>
+    </div>
+  );
+}
+
+// ── Leaderboard ──────────────────────────────────────────────────────────────
+
+function LeaderboardPanel() {
+  const [board, setBoard] = useState<{ id: string; nickname: string; balance: number }[]>([]);
+
+  useEffect(() => {
+    const load = () => {
+      fetch("/api/leaderboard")
+        .then(r => r.json())
+        .then(data => { if (Array.isArray(data)) setBoard(data); })
+        .catch(() => {});
+    };
+    load();
+    const interval = setInterval(load, 15_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (board.length === 0) return null;
+
+  return (
+    <div className="leaderboard">
+      <div className="leaderboard__title">Top Bettors</div>
+      <div className="leaderboard__list">
+        {board.map((u, i) => (
+          <div key={u.id} className="leaderboard__row">
+            <span className="leaderboard__rank">{i + 1}</span>
+            <span className="leaderboard__name">{u.nickname}</span>
+            <span className="leaderboard__bal">{u.balance}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -412,6 +683,40 @@ function App() {
   const [totalRounds, setTotalRounds] = useState<number | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [betState, setBetState] = useState<BetState | null>(null);
+
+  // User identity
+  const [userId, setUserId] = useState(() => localStorage.getItem("qs_userId") || "");
+  const [nickname, setNickname] = useState(() => localStorage.getItem("qs_nickname") || "");
+  const [balance, setBalance] = useState(() => parseInt(localStorage.getItem("qs_balance") || "0", 10));
+  const [showNicknameModal, setShowNicknameModal] = useState(false);
+
+  // Sync user on first load
+  useEffect(() => {
+    if (userId) {
+      fetch(`/api/me?id=${encodeURIComponent(userId)}`)
+        .then(r => {
+          if (!r.ok) {
+            // User was deleted (e.g. admin reset)
+            localStorage.removeItem("qs_userId");
+            localStorage.removeItem("qs_nickname");
+            localStorage.removeItem("qs_balance");
+            setUserId("");
+            setNickname("");
+            setBalance(0);
+            return null;
+          }
+          return r.json();
+        })
+        .then(data => {
+          if (data?.user) {
+            setBalance(data.user.balance);
+            localStorage.setItem("qs_balance", String(data.user.balance));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [userId]);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -437,6 +742,7 @@ function App() {
           setState(msg.data);
           setTotalRounds(msg.totalRounds);
           setViewerCount(msg.viewerCount);
+          setBetState(msg.betState);
         } else if (msg.type === "viewerCount") {
           setViewerCount(msg.viewerCount);
         }
@@ -457,8 +763,18 @@ function App() {
   const displayRound =
     isNextPrompting && state.lastCompleted ? state.lastCompleted : state.active;
 
+  const handleJoin = (id: string, nick: string) => {
+    setUserId(id);
+    setNickname(nick);
+    setBalance(1000);
+    setShowNicknameModal(false);
+  };
+
+  const bettingRound = state.active;
+
   return (
     <div className="app">
+      {showNicknameModal && <NicknameModal onJoin={handleJoin} />}
       <div className="layout">
         <main className="main">
           <header className="header">
@@ -474,6 +790,16 @@ function App() {
                   Paused
                 </div>
               )}
+              {userId ? (
+                <div className="user-balance" title={nickname}>
+                  <span className="user-balance__coins">{balance}</span>
+                  <span className="user-balance__label">coins</span>
+                </div>
+              ) : (
+                <button className="join-btn" onClick={() => setShowNicknameModal(true)}>
+                  Bet
+                </button>
+              )}
               <div className="viewer-pill" aria-live="polite">
                 <span className="viewer-pill__dot" />
                 {viewerCount} viewer{viewerCount === 1 ? "" : "s"} watching
@@ -484,7 +810,21 @@ function App() {
           {state.done ? (
             <GameOver scores={state.scores} />
           ) : displayRound ? (
-            <Arena round={displayRound} total={totalRounds} />
+            <>
+              <Arena round={displayRound} total={totalRounds} />
+              {userId && bettingRound && (
+                <BettingPanel
+                  round={bettingRound}
+                  betState={betState}
+                  userId={userId}
+                  balance={balance}
+                  onBalanceChange={(b) => {
+                    setBalance(b);
+                    localStorage.setItem("qs_balance", String(b));
+                  }}
+                />
+              )}
+            </>
           ) : (
             <div className="waiting">
               Starting
@@ -501,7 +841,10 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} activeRound={state.active} />
+        <div className="sidebar">
+          <Standings scores={state.scores} activeRound={state.active} />
+          <LeaderboardPanel />
+        </div>
       </div>
     </div>
   );
