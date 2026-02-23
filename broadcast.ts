@@ -560,6 +560,26 @@ function startCanvasCaptureSink() {
   const sink = params.get("sink");
   if (!sink) return;
 
+  // Only allow WebSocket connections to localhost to prevent data exfiltration
+  try {
+    const sinkUrl = new URL(sink);
+    const isLocalhost =
+      sinkUrl.hostname === "localhost" ||
+      sinkUrl.hostname === "127.0.0.1" ||
+      sinkUrl.hostname === "::1";
+    if (!isLocalhost) {
+      setStatus("Sink must be localhost");
+      return;
+    }
+    if (sinkUrl.protocol !== "ws:" && sinkUrl.protocol !== "wss:") {
+      setStatus("Sink must use ws:// or wss://");
+      return;
+    }
+  } catch {
+    setStatus("Invalid sink URL");
+    return;
+  }
+
   if (!("MediaRecorder" in window)) {
     setStatus("MediaRecorder unavailable");
     return;

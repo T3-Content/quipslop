@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./admin.css";
 
@@ -82,7 +82,50 @@ function App() {
     };
   }, []);
 
-  const busy = useMemo(() => pending !== null, [pending]);
+  // Poll admin status every 10 seconds when authenticated
+  useEffect(() => {
+    if (mode !== "ready") return;
+    const interval = setInterval(() => {
+      requestAdminJson("/api/admin/status")
+        .then((data) => setSnapshot(data))
+        .catch(() => {});
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [mode]);
+
+  // Modal escape key handler
+  useEffect(() => {
+    if (!isResetOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsResetOpen(false);
+        setResetText("");
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isResetOpen]);
+
+  // Modal focus trap
+  const modalRef = useRef<HTMLDivElement>(null);
+  const handleModalKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "Tab" || !modalRef.current) return;
+    const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+      'button, input, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }, []);
+
+  const busy = pending !== null;
 
   async function onLogin(event: React.FormEvent) {
     event.preventDefault();
@@ -328,8 +371,8 @@ function App() {
       </main>
 
       {isResetOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onKeyDown={handleModalKeyDown}>
+          <div className="modal" ref={modalRef}>
             <h2>Reset all data?</h2>
             <p>
               This permanently deletes every saved round and resets scores.

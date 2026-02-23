@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { timingSafeEqual } from "node:crypto";
+import { resolve } from "node:path";
 import indexHtml from "./index.html";
 import historyHtml from "./history.html";
 import adminHtml from "./admin.html";
@@ -184,10 +185,9 @@ function clearAdminCookie(isSecure: boolean): string {
   return buildAdminCookie("", isSecure, 0);
 }
 
-function getProvidedAdminSecret(req: Request, url: URL): string {
-  const headerOrQuery =
-    req.headers.get("x-admin-secret") ?? url.searchParams.get("secret");
-  if (headerOrQuery) return headerOrQuery;
+function getProvidedAdminSecret(req: Request, _url: URL): string {
+  const header = req.headers.get("x-admin-secret");
+  if (header) return header;
   const cookies = parseCookies(req);
   return cookies[ADMIN_COOKIE] ?? "";
 }
@@ -262,8 +262,12 @@ const server = Bun.serve<WsData>({
     const ip = getClientIp(req, server);
 
     if (url.pathname.startsWith("/assets/")) {
-      const path = `./public${url.pathname}`;
-      const file = Bun.file(path);
+      const PUBLIC_DIR = resolve("./public");
+      const safePath = resolve(`./public${url.pathname}`);
+      if (!safePath.startsWith(PUBLIC_DIR + "/") && safePath !== PUBLIC_DIR) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      const file = Bun.file(safePath);
       return new Response(file, {
         headers: {
           "Cache-Control": "public, max-age=604800, immutable",
@@ -289,7 +293,7 @@ const server = Bun.serve<WsData>({
 
       const expected = process.env.ADMIN_SECRET;
       if (!expected) {
-        return new Response("ADMIN_SECRET is not configured", { status: 503 });
+        return new Response("Service Unavailable", { status: 503 });
       }
 
       let passcode = "";
@@ -425,8 +429,6 @@ const server = Bun.serve<WsData>({
     }
 
     if (
-      url.pathname === "/api/pause" ||
-      url.pathname === "/api/resume" ||
       url.pathname === "/api/admin/pause" ||
       url.pathname === "/api/admin/resume"
     ) {
@@ -450,9 +452,6 @@ const server = Bun.serve<WsData>({
       }
       broadcast();
       const action = url.pathname.endsWith("/pause") ? "Paused" : "Resumed";
-      if (url.pathname === "/api/pause" || url.pathname === "/api/resume") {
-        return new Response(action, { status: 200 });
-      }
       return new Response(
         JSON.stringify({ ok: true, action, ...getAdminSnapshot() }),
         {
@@ -579,6 +578,14 @@ log("INFO", "server", `Web server started on port ${server.port}`, {
 
 // ── Start game ──────────────────────────────────────────────────────────────
 
-runGame(runs, gameState, broadcast).then(() => {
-  console.log(`\n✅ Game complete! Log: ${LOG_FILE}`);
-});
+runGame(runs, gameState, broadcast)
+  .then(() => {
+    console.log(`\n✅ Game complete! Log: ${LOG_FILE}`);
+  })
+  .catch((err) => {
+    log("ERROR", "game", "Game loop crashed", {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    console.error("Game loop crashed:", err);
+  });
