@@ -30,6 +30,8 @@ type RoundState = {
   votes: VoteInfo[];
   scoreA?: number;
   scoreB?: number;
+  viewerVotesA?: number;
+  viewerVotesB?: number;
 };
 
 // ── Shared UI Utils ─────────────────────────────────────────────────────────
@@ -124,6 +126,17 @@ function HistoryContestant({
   );
 }
 
+function ViewerVotes({ count, label }: { count: number; label: string }) {
+  return (
+    <div className="history-contestant__viewer-votes">
+      <span className="history-contestant__viewer-icon">👥</span>
+      <span className="history-contestant__viewer-count">
+        {count} {label}
+      </span>
+    </div>
+  );
+}
+
 function HistoryCard({ round }: { round: RoundState }) {
   const [contA, contB] = round.contestants;
 
@@ -144,6 +157,7 @@ function HistoryCard({ round }: { round: RoundState }) {
 
   const isAWinner = votesA > votesB;
   const isBWinner = votesB > votesA;
+  const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
 
   return (
     <div className="history-card">
@@ -193,6 +207,12 @@ function HistoryCard({ round }: { round: RoundState }) {
               )}
             </div>
           </div>
+          {totalViewerVotes > 0 && (
+            <ViewerVotes
+              count={round.viewerVotesA ?? 0}
+              label={`viewer vote${(round.viewerVotesA ?? 0) === 1 ? "" : "s"}`}
+            />
+          )}
         </div>
 
         <div
@@ -228,6 +248,12 @@ function HistoryCard({ round }: { round: RoundState }) {
               )}
             </div>
           </div>
+          {totalViewerVotes > 0 && (
+            <ViewerVotes
+              count={round.viewerVotesB ?? 0}
+              label={`viewer vote${(round.viewerVotesB ?? 0) === 1 ? "" : "s"}`}
+            />
+          )}
         </div>
       </div>
     </div>

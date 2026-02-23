@@ -225,6 +225,7 @@ function Game({ runs }: { runs: number }) {
     active: null,
     scores: Object.fromEntries(MODELS.map((m) => [m.name, 0])),
     streaks: {},
+    viewerScores: Object.fromEntries(MODELS.map((m) => [m.name, 0])),
     done: false,
     isPaused: false,
     generation: 0,

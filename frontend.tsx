@@ -30,12 +30,16 @@ type RoundState = {
   votes: VoteInfo[];
   scoreA?: number;
   scoreB?: number;
+  viewerVotesA?: number;
+  viewerVotesB?: number;
+  viewerVotingEndsAt?: number;
 };
 type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
   streaks: Record<string, number>;
+  viewerScores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -157,6 +161,8 @@ function ContestantCard({
   showVotes,
   voters,
   streak,
+  viewerVotes,
+  totalViewerVotes,
 }: {
   task: TaskInfo;
   voteCount: number;
@@ -165,9 +171,15 @@ function ContestantCard({
   showVotes: boolean;
   voters: VoteInfo[];
   streak: number;
+  viewerVotes?: number;
+  totalViewerVotes?: number;
 }) {
   const color = getColor(task.model.name);
   const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+  const showViewerVotes = showVotes && totalViewerVotes !== undefined && totalViewerVotes > 0;
+  const viewerPct = showViewerVotes && totalViewerVotes > 0
+    ? Math.round(((viewerVotes ?? 0) / totalViewerVotes) * 100)
+    : 0;
 
   return (
     <div
@@ -235,6 +247,25 @@ function ContestantCard({
               })}
             </span>
           </div>
+          {showViewerVotes && (
+            <>
+              <div className="vote-bar viewer-vote-bar">
+                <div
+                  className="vote-bar__fill viewer-vote-bar__fill"
+                  style={{ width: `${viewerPct}%` }}
+                />
+              </div>
+              <div className="vote-meta viewer-vote-meta">
+                <span className="vote-meta__count viewer-vote-meta__count">
+                  {viewerVotes ?? 0}
+                </span>
+                <span className="vote-meta__label">
+                  viewer vote{(viewerVotes ?? 0) !== 1 ? "s" : ""}
+                </span>
+                <span className="viewer-vote-meta__icon">👥</span>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -243,7 +274,17 @@ function ContestantCard({
 
 // ── Arena ─────────────────────────────────────────────────────────────────────
 
-function Arena({ round, total, streaks }: { round: RoundState; total: number | null; streaks: Record<string, number> }) {
+function Arena({
+  round,
+  total,
+  streaks,
+  viewerVotingSecondsLeft,
+}: {
+  round: RoundState;
+  total: number | null;
+  streaks: Record<string, number>;
+  viewerVotingSecondsLeft: number;
+}) {
   const [contA, contB] = round.contestants;
   const showVotes = round.phase === "voting" || round.phase === "done";
   const isDone = round.phase === "done";
@@ -257,6 +298,9 @@ function Arena({ round, total, streaks }: { round: RoundState; total: number | n
   const totalVotes = votesA + votesB;
   const votersA = round.votes.filter((v) => v.votedFor?.name === contA.name);
   const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
+  const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
+
+  const showCountdown = round.phase === "voting" && viewerVotingSecondsLeft > 0;
 
   const phaseText =
     round.phase === "prompting"
@@ -274,8 +318,18 @@ function Arena({ round, total, streaks }: { round: RoundState; total: number | n
           Round {round.num}
           {total ? <span className="dim">/{total}</span> : null}
         </span>
-        <span className="arena__phase">{phaseText}</span>
+        <span className="arena__phase">
+          {phaseText}
+          {showCountdown && (
+            <span className="vote-countdown">{viewerVotingSecondsLeft}s</span>
+          )}
+        </span>
       </div>
+      {showCountdown && (
+        <div className="vote-hint">
+          Vote in Twitch chat: <strong>1</strong> for left, <strong>2</strong> for right.
+        </div>
+      )}
 
       <PromptCard round={round} />
 
@@ -289,6 +343,8 @@ function Arena({ round, total, streaks }: { round: RoundState; total: number | n
             showVotes={showVotes}
             voters={votersA}
             streak={streaks[contA.name] || 0}
+            viewerVotes={round.viewerVotesA}
+            totalViewerVotes={totalViewerVotes}
           />
           <ContestantCard
             task={round.answerTasks[1]}
@@ -298,6 +354,8 @@ function Arena({ round, total, streaks }: { round: RoundState; total: number | n
             showVotes={showVotes}
             voters={votersB}
             streak={streaks[contB.name] || 0}
+            viewerVotes={round.viewerVotesB}
+            totalViewerVotes={totalViewerVotes}
           />
         </div>
       )}
@@ -337,18 +395,70 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 // ── Standings ────────────────────────────────────────────────────────────────
 
-function Standings({
+function LeaderboardSection({
+  label,
   scores,
   streaks,
-  activeRound,
+  competing,
 }: {
+  label: string;
   scores: Record<string, number>;
-  streaks: Record<string, number>;
-  activeRound: RoundState | null;
+  streaks?: Record<string, number>;
+  competing: Set<string>;
 }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const maxScore = sorted[0]?.[1] || 1;
 
+  return (
+    <div className="lb-section">
+      <div className="lb-section__head">
+        <span className="lb-section__label">{label}</span>
+      </div>
+      <div className="lb-section__list">
+        {sorted.map(([name, score], i) => {
+          const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+          const color = getColor(name);
+          const active = competing.has(name);
+          return (
+            <div
+              key={name}
+              className={`lb-entry ${active ? "lb-entry--active" : ""}`}
+            >
+              <div className="lb-entry__top">
+                <span className="lb-entry__rank">
+                  {i === 0 && score > 0 ? "👑" : i + 1}
+                </span>
+                <ModelTag model={{ id: name, name }} small />
+                {(streaks?.[name] || 0) >= 2 && (
+                  <span className="streak-badge">🔥{streaks![name]}</span>
+                )}
+                <span className="lb-entry__score">{score}</span>
+              </div>
+              <div className="lb-entry__bar">
+                <div
+                  className="lb-entry__fill"
+                  style={{ width: `${pct}%`, background: color }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Standings({
+  scores,
+  viewerScores,
+  streaks,
+  activeRound,
+}: {
+  scores: Record<string, number>;
+  viewerScores: Record<string, number>;
+  streaks: Record<string, number>;
+  activeRound: RoundState | null;
+}) {
   const competing = activeRound
     ? new Set([
         activeRound.contestants[0].name,
@@ -372,36 +482,17 @@ function Standings({
           </a>
         </div>
       </div>
-      <div className="standings__list">
-        {sorted.map(([name, score], i) => {
-          const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-          const color = getColor(name);
-          const active = competing.has(name);
-          return (
-            <div
-              key={name}
-              className={`standing ${active ? "standing--active" : ""}`}
-            >
-              <span className="standing__rank">
-                {i === 0 && score > 0 ? "👑" : i + 1}
-              </span>
-              <ModelTag model={{ id: name, name }} small />
-              <div className="standing__bar">
-                <div
-                  className="standing__fill"
-                  style={{ width: `${pct}%`, background: color }}
-                />
-              </div>
-              {(streaks[name] || 0) >= 2 && (
-                <span className="standing__streak" title={`${streaks[name]} win streak`}>
-                  🔥{streaks[name]}
-                </span>
-              )}
-              <span className="standing__score">{score}</span>
-            </div>
-          );
-        })}
-      </div>
+      <LeaderboardSection
+        label="AI Judges"
+        scores={scores}
+        streaks={streaks}
+        competing={competing}
+      />
+      <LeaderboardSection
+        label="Viewers"
+        scores={viewerScores}
+        competing={competing}
+      />
     </aside>
   );
 }
@@ -429,6 +520,24 @@ function App() {
   const [totalRounds, setTotalRounds] = useState<number | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [viewerVotingSecondsLeft, setViewerVotingSecondsLeft] = useState(0);
+
+  // Countdown timer for viewer voting
+  useEffect(() => {
+    const endsAt = state?.active?.viewerVotingEndsAt;
+    if (!endsAt || state?.active?.phase !== "voting") {
+      setViewerVotingSecondsLeft(0);
+      return;
+    }
+
+    function tick() {
+      const remaining = Math.max(0, Math.ceil((endsAt! - Date.now()) / 1000));
+      setViewerVotingSecondsLeft(remaining);
+    }
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [state?.active?.viewerVotingEndsAt, state?.active?.phase]);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -501,7 +610,12 @@ function App() {
           {state.done ? (
             <GameOver scores={state.scores} />
           ) : displayRound ? (
-            <Arena round={displayRound} total={totalRounds} streaks={state.streaks} />
+            <Arena
+              round={displayRound}
+              total={totalRounds}
+              streaks={state.streaks}
+              viewerVotingSecondsLeft={viewerVotingSecondsLeft}
+            />
           ) : (
             <div className="waiting">
               Starting
@@ -518,7 +632,7 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} streaks={state.streaks} activeRound={state.active} />
+        <Standings scores={state.scores} viewerScores={state.viewerScores ?? {}} streaks={state.streaks ?? {}} activeRound={state.active} />
       </div>
     </div>
   );

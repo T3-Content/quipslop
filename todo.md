@@ -2,6 +2,7 @@
 
 - [ ] Win streaks
 - [ ] Experiment with more models
+- [ ] Homepage should have "stacked" ranking like the broadcast page does (logo/name on top of bar instead of horizontally aligned)
 
 ## TODO Bugfixes
 

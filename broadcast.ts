@@ -24,12 +24,16 @@ type RoundState = {
   votes: VoteInfo[];
   scoreA?: number;
   scoreB?: number;
+  viewerVotesA?: number;
+  viewerVotesB?: number;
+  viewerVotingEndsAt?: number;
 };
 type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
   streaks: Record<string, number>;
+  viewerScores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -292,8 +296,70 @@ function drawHeader() {
 
 }
 
-function drawScoreboard(scores: Record<string, number>, streaks: Record<string, number>) {
-  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+function drawScoreboardSection(
+  entries: [string, number][],
+  label: string,
+  startY: number,
+  entryHeight: number,
+  streaks?: Record<string, number>,
+) {
+  const maxScore = entries[0]?.[1] || 1;
+
+  // Section label
+  ctx.font = '700 13px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#555";
+  ctx.fillText(label, WIDTH - 348, startY);
+
+  // Divider line under label
+  ctx.fillStyle = "#1c1c1c";
+  ctx.fillRect(WIDTH - 348, startY + 8, 296, 1);
+
+  entries.forEach(([name, score], index) => {
+    const y = startY + 20 + index * entryHeight;
+    const color = getColor(name);
+    const pct = maxScore > 0 ? score / maxScore : 0;
+
+    ctx.font = '600 16px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#555";
+    const rank = index === 0 && score > 0 ? "👑" : String(index + 1);
+    ctx.fillText(rank, WIDTH - 348, y + 18);
+
+    ctx.font = '600 16px "Inter", sans-serif';
+    ctx.fillStyle = color;
+    const nameText = name.length > 18 ? `${name.slice(0, 18)}...` : name;
+
+    const drewLogo = drawModelLogo(name, WIDTH - 310, y + 4, 20);
+    if (drewLogo) {
+      ctx.fillText(nameText, WIDTH - 310 + 26, y + 18);
+    } else {
+      ctx.fillText(nameText, WIDTH - 310, y + 18);
+    }
+
+    roundRect(WIDTH - 310, y + 30, 216, 3, 2, "#1c1c1c");
+    if (pct > 0) {
+      roundRect(WIDTH - 310, y + 30, Math.max(6, 216 * pct), 3, 2, color);
+    }
+
+    ctx.font = '700 16px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#666";
+    const scoreText = String(score);
+    const scoreWidth = ctx.measureText(scoreText).width;
+    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 18);
+
+    const streak = streaks?.[name] || 0;
+    if (streak >= 2) {
+      ctx.font = '600 14px "Inter", sans-serif';
+      ctx.fillStyle = "#f59e0b";
+      const streakText = `🔥${streak}`;
+      const streakWidth = ctx.measureText(streakText).width;
+      ctx.fillText(streakText, WIDTH - 48 - scoreWidth - streakWidth - 8, y + 18);
+    }
+  });
+}
+
+function drawScoreboard(scores: Record<string, number>, viewerScores: Record<string, number>, streaks: Record<string, number>) {
+  const modelEntries = Object.entries(scores).sort((a, b) => b[1] - a[1]) as [string, number][];
+  const viewerEntries = Object.entries(viewerScores).sort((a, b) => b[1] - a[1]) as [string, number][];
 
   roundRect(WIDTH - 380, 0, 380, HEIGHT, 0, "#111");
   ctx.fillStyle = "#1c1c1c";
@@ -303,55 +369,17 @@ function drawScoreboard(scores: Record<string, number>, streaks: Record<string, 
   ctx.fillStyle = "#888";
   ctx.fillText("STANDINGS", WIDTH - 348, 76);
 
-  const maxScore = entries[0]?.[1] || 1;
+  const entryHeight = 52;
+  drawScoreboardSection(modelEntries, "AI JUDGES", 110, entryHeight, streaks);
 
-  entries.slice(0, 10).forEach(([name, score], index) => {
-    const y = 140 + index * 68;
-    const color = getColor(name);
-    const pct = maxScore > 0 ? (score / maxScore) : 0;
-
-    ctx.font = '600 20px "JetBrains Mono", monospace';
-    ctx.fillStyle = "#888";
-    const rank = index === 0 && score > 0 ? "👑" : String(index + 1);
-    ctx.fillText(rank, WIDTH - 348, y + 24);
-
-    ctx.font = '600 20px "Inter", sans-serif';
-    ctx.fillStyle = color;
-    const nameText = name.length > 18 ? `${name.slice(0, 18)}...` : name;
-
-    const drewLogo = drawModelLogo(name, WIDTH - 304, y + 6, 24);
-    if (drewLogo) {
-      ctx.fillText(nameText, WIDTH - 304 + 32, y + 24);
-    } else {
-      ctx.fillText(nameText, WIDTH - 304, y + 24);
-    }
-
-    roundRect(WIDTH - 304, y + 42, 208, 4, 2, "#1c1c1c");
-    if (pct > 0) {
-      roundRect(WIDTH - 304, y + 42, Math.max(8, 208 * pct), 4, 2, color);
-    }
-
-    ctx.font = '700 20px "JetBrains Mono", monospace';
-    ctx.fillStyle = "#888";
-    const scoreText = String(score);
-    const scoreWidth = ctx.measureText(scoreText).width;
-    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 24);
-
-    const streak = streaks[name] || 0;
-    if (streak >= 2) {
-      ctx.font = '600 16px "Inter", sans-serif';
-      ctx.fillStyle = "#f59e0b";
-      const streakText = `🔥${streak}`;
-      const streakWidth = ctx.measureText(streakText).width;
-      ctx.fillText(streakText, WIDTH - 48 - scoreWidth - streakWidth - 8, y + 24);
-    }
-  });
+  const viewerStartY = 110 + 28 + modelEntries.length * entryHeight + 16;
+  drawScoreboardSection(viewerEntries, "VIEWERS", viewerStartY, entryHeight);
 }
 
 function drawRound(round: RoundState) {
   const mainW = WIDTH - 380;
 
-  const phaseLabel =
+  let phaseLabel =
     (round.phase === "prompting"
       ? "Writing prompt"
       : round.phase === "answering"
@@ -361,6 +389,12 @@ function drawRound(round: RoundState) {
           : "Complete"
     ).toUpperCase();
 
+  // Append countdown during voting phase
+  let countdownSeconds = 0;
+  if (round.phase === "voting" && round.viewerVotingEndsAt) {
+    countdownSeconds = Math.max(0, Math.ceil((round.viewerVotingEndsAt - Date.now()) / 1000));
+  }
+
   ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const totalText = totalRounds !== null ? `/${totalRounds}` : "";
@@ -369,6 +403,13 @@ function drawRound(round: RoundState) {
   ctx.fillStyle = "#888";
   const labelWidth = ctx.measureText(phaseLabel).width;
   ctx.fillText(phaseLabel, mainW - 64 - labelWidth, 150);
+
+  if (countdownSeconds > 0) {
+    const countdownText = `${countdownSeconds}S`;
+    ctx.fillStyle = "#ededed";
+    const cdWidth = ctx.measureText(countdownText).width;
+    ctx.fillText(countdownText, mainW - 64 - labelWidth - cdWidth - 12, 150);
+  }
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
@@ -493,30 +534,38 @@ function drawContestantCard(
     const totalVotes = votesA + votesB;
     const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
 
-    roundRect(x + 24, y + h - 60, w - 48, 4, 2, "#1c1c1c");
+    const viewerVoteCount = isFirst ? (round.viewerVotesA ?? 0) : (round.viewerVotesB ?? 0);
+    const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
+    const hasViewerVotes = totalViewerVotes > 0;
+
+    // Shift model votes up when viewer votes are present
+    const modelVoteBarY = hasViewerVotes ? y + h - 110 : y + h - 60;
+    const modelVoteTextY = hasViewerVotes ? y + h - 74 : y + h - 24;
+
+    roundRect(x + 24, modelVoteBarY, w - 48, 4, 2, "#1c1c1c");
     if (pct > 0) {
-      roundRect(x + 24, y + h - 60, Math.max(8, ((w - 48) * pct) / 100), 4, 2, color);
+      roundRect(x + 24, modelVoteBarY, Math.max(8, ((w - 48) * pct) / 100), 4, 2, color);
     }
 
     ctx.font = '700 28px "JetBrains Mono", monospace';
     ctx.fillStyle = color;
-    ctx.fillText(String(voteCount), x + 24, y + h - 24);
+    ctx.fillText(String(voteCount), x + 24, modelVoteTextY);
 
     ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#444";
     const vTxt = `vote${voteCount === 1 ? "" : "s"}`;
     const vCountW = ctx.measureText(String(voteCount)).width;
     const vTxtW = ctx.measureText(vTxt).width;
-    ctx.fillText(vTxt, x + 24 + vCountW + 8, y + h - 25);
+    ctx.fillText(vTxt, x + 24 + vCountW + 8, modelVoteTextY - 1);
 
     let avatarX = x + 24 + vCountW + 8 + vTxtW + 16;
-    const avatarY = y + h - 48;
+    const avatarY = modelVoteBarY + 12;
     const avatarSize = 28;
 
     for (const v of taskVoters) {
       const vColor = getColor(v.voter.name);
       const drewLogo = drawModelLogo(v.voter.name, avatarX, avatarY, avatarSize);
-      
+
       if (!drewLogo) {
         ctx.beginPath();
         ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
@@ -528,8 +577,28 @@ function drawContestantCard(
         const tw = ctx.measureText(initial).width;
         ctx.fillText(initial, avatarX + avatarSize / 2 - tw / 2, avatarY + avatarSize / 2 + 4);
       }
-      
+
       avatarX += avatarSize + 8;
+    }
+
+    // Viewer votes
+    if (hasViewerVotes) {
+      const viewerPct = Math.round((viewerVoteCount / totalViewerVotes) * 100);
+
+      roundRect(x + 24, y + h - 56, w - 48, 4, 2, "#1c1c1c");
+      if (viewerPct > 0) {
+        roundRect(x + 24, y + h - 56, Math.max(8, ((w - 48) * viewerPct) / 100), 4, 2, "#666");
+      }
+
+      ctx.font = '700 22px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#999";
+      ctx.fillText(String(viewerVoteCount), x + 24, y + h - 22);
+
+      const vvCountW = ctx.measureText(String(viewerVoteCount)).width;
+      ctx.font = '600 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#444";
+      const vvTxt = `viewer vote${viewerVoteCount === 1 ? "" : "s"}`;
+      ctx.fillText(vvTxt, x + 24 + vvCountW + 8, y + h - 23);
     }
   }
 }
@@ -574,7 +643,7 @@ function draw() {
       return;
   }
 
-  drawScoreboard(state.scores, state.streaks);
+  drawScoreboard(state.scores, state.viewerScores ?? {}, state.streaks ?? {});
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);
