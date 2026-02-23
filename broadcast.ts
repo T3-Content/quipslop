@@ -29,6 +29,7 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -291,9 +292,9 @@ function drawHeader() {
 
 }
 
-function drawScoreboard(scores: Record<string, number>) {
+function drawScoreboard(scores: Record<string, number>, streaks: Record<string, number>) {
   const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  
+
   roundRect(WIDTH - 380, 0, 380, HEIGHT, 0, "#111");
   ctx.fillStyle = "#1c1c1c";
   ctx.fillRect(WIDTH - 380, 0, 1, HEIGHT);
@@ -335,6 +336,15 @@ function drawScoreboard(scores: Record<string, number>) {
     const scoreText = String(score);
     const scoreWidth = ctx.measureText(scoreText).width;
     ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 24);
+
+    const streak = streaks[name] || 0;
+    if (streak >= 2) {
+      ctx.font = '600 16px "Inter", sans-serif';
+      ctx.fillStyle = "#f59e0b";
+      const streakText = `🔥${streak}`;
+      const streakWidth = ctx.measureText(streakText).width;
+      ctx.fillText(streakText, WIDTH - 48 - scoreWidth - streakWidth - 8, y + 24);
+    }
   });
 }
 
@@ -564,7 +574,7 @@ function draw() {
       return;
   }
 
-  drawScoreboard(state.scores);
+  drawScoreboard(state.scores, state.streaks);
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);

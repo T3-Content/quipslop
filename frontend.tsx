@@ -35,6 +35,7 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -155,6 +156,7 @@ function ContestantCard({
   isWinner,
   showVotes,
   voters,
+  streak,
 }: {
   task: TaskInfo;
   voteCount: number;
@@ -162,6 +164,7 @@ function ContestantCard({
   isWinner: boolean;
   showVotes: boolean;
   voters: VoteInfo[];
+  streak: number;
 }) {
   const color = getColor(task.model.name);
   const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
@@ -173,6 +176,11 @@ function ContestantCard({
     >
       <div className="contestant__head">
         <ModelTag model={task.model} />
+        {streak >= 2 && (
+          <span className="streak-badge" title={`${streak} win streak`}>
+            🔥 {streak}
+          </span>
+        )}
         {isWinner && <span className="win-tag">WIN</span>}
       </div>
 
@@ -235,7 +243,7 @@ function ContestantCard({
 
 // ── Arena ─────────────────────────────────────────────────────────────────────
 
-function Arena({ round, total }: { round: RoundState; total: number | null }) {
+function Arena({ round, total, streaks }: { round: RoundState; total: number | null; streaks: Record<string, number> }) {
   const [contA, contB] = round.contestants;
   const showVotes = round.phase === "voting" || round.phase === "done";
   const isDone = round.phase === "done";
@@ -280,6 +288,7 @@ function Arena({ round, total }: { round: RoundState; total: number | null }) {
             isWinner={isDone && votesA > votesB}
             showVotes={showVotes}
             voters={votersA}
+            streak={streaks[contA.name] || 0}
           />
           <ContestantCard
             task={round.answerTasks[1]}
@@ -288,6 +297,7 @@ function Arena({ round, total }: { round: RoundState; total: number | null }) {
             isWinner={isDone && votesB > votesA}
             showVotes={showVotes}
             voters={votersB}
+            streak={streaks[contB.name] || 0}
           />
         </div>
       )}
@@ -329,9 +339,11 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 function Standings({
   scores,
+  streaks,
   activeRound,
 }: {
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   activeRound: RoundState | null;
 }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -380,6 +392,11 @@ function Standings({
                   style={{ width: `${pct}%`, background: color }}
                 />
               </div>
+              {(streaks[name] || 0) >= 2 && (
+                <span className="standing__streak" title={`${streaks[name]} win streak`}>
+                  🔥{streaks[name]}
+                </span>
+              )}
               <span className="standing__score">{score}</span>
             </div>
           );
@@ -484,7 +501,7 @@ function App() {
           {state.done ? (
             <GameOver scores={state.scores} />
           ) : displayRound ? (
-            <Arena round={displayRound} total={totalRounds} />
+            <Arena round={displayRound} total={totalRounds} streaks={state.streaks} />
           ) : (
             <div className="waiting">
               Starting
@@ -501,7 +518,7 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} activeRound={state.active} />
+        <Standings scores={state.scores} streaks={state.streaks} activeRound={state.active} />
       </div>
     </div>
   );

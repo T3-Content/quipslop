@@ -220,6 +220,15 @@ body {
   flex-shrink: 0;
 }
 
+.streak-badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  color: #f59e0b;
+  margin-left: auto;
+}
+
 .win-tag {
   font-family: var(--mono);
   font-size: 10px;
@@ -417,6 +426,14 @@ body {
   height: 100%;
   border-radius: 2px;
   transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.standing__streak {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f59e0b;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .standing__score {
