@@ -37,6 +37,20 @@ export function getAllRounds() {
   return rows.map(r => JSON.parse(r.data) as RoundState);
 }
 
+export function getRecentPrompts(limit: number = 50): string[] {
+  const rows = db.query(
+    "SELECT data FROM rounds ORDER BY id DESC LIMIT $limit"
+  ).all({ $limit: limit }) as { data: string }[];
+  return rows
+    .map(r => {
+      try {
+        const round = JSON.parse(r.data) as RoundState;
+        return round.prompt;
+      } catch { return null; }
+    })
+    .filter((p): p is string => !!p);
+}
+
 export function clearAllRounds() {
   db.exec("DELETE FROM rounds;");
   db.exec("DELETE FROM sqlite_sequence WHERE name = 'rounds';");
