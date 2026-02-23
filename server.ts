@@ -232,15 +232,25 @@ function setHistoryCache(key: string, body: string, expiresAt: number) {
 
 const clients = new Set<ServerWebSocket<WsData>>();
 
+let betTotalsCache: { roundNum: number; totals: Record<string, { count: number; total: number }> } | null = null;
+
+function invalidateBetCache() {
+  betTotalsCache = null;
+}
+
 function broadcast() {
   let betState: { roundNum: number; open: boolean; totals: Record<string, { count: number; total: number }> } | null = null;
   const active = gameState.active;
   if (active) {
     const open = active.phase === "prompting" || active.phase === "answering";
+    // Use cached totals if same round, otherwise refresh
+    if (!betTotalsCache || betTotalsCache.roundNum !== active.num) {
+      betTotalsCache = { roundNum: active.num, totals: getBetsForRound(active.num) };
+    }
     betState = {
       roundNum: active.num,
       open,
-      totals: getBetsForRound(active.num),
+      totals: betTotalsCache.totals,
     };
   }
 
@@ -545,7 +555,9 @@ const server = Bun.serve<WsData>({
       try {
         const body = await req.json();
         id = String((body as Record<string, unknown>).id ?? "").trim();
-        nickname = String((body as Record<string, unknown>).nickname ?? "").trim();
+        nickname = String((body as Record<string, unknown>).nickname ?? "").trim()
+          .normalize("NFKC")
+          .replace(/[\x00-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, ""); // strip control/zero-width chars
       } catch {
         return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
@@ -563,10 +575,12 @@ const server = Bun.serve<WsData>({
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("UNIQUE")) {
-          // Could be duplicate id or nickname — try to return existing user if id matches
-          const existing = getUser(id);
-          if (existing) {
-            return new Response(JSON.stringify({ ok: true, user: existing }), { status: 200, headers: { "Content-Type": "application/json" } });
+          if (msg.includes("users.id")) {
+            // Same client re-registering — return their existing record
+            const existing = getUser(id);
+            if (existing) {
+              return new Response(JSON.stringify({ ok: true, user: existing }), { status: 200, headers: { "Content-Type": "application/json" } });
+            }
           }
           return new Response(JSON.stringify({ error: "Nickname taken" }), { status: 409, headers: { "Content-Type": "application/json" } });
         }
@@ -615,6 +629,7 @@ const server = Bun.serve<WsData>({
 
       try {
         const result = placeBet(userId, roundNum, contestant, amount);
+        invalidateBetCache();
         broadcast(); // update bet totals for all viewers
         return new Response(JSON.stringify({ ok: true, bet: result.bet, balance: result.balance }), { status: 200, headers: { "Content-Type": "application/json" } });
       } catch (e: unknown) {

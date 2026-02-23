@@ -446,12 +446,18 @@ export async function runGame(
     round.phase = "done";
     if (votesA > votesB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
-      resolveBets(r, contA.name);
+      try { resolveBets(r, contA.name); } catch (e) {
+        log("ERROR", "betting", `Failed to resolve bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
     } else if (votesB > votesA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
-      resolveBets(r, contB.name);
+      try { resolveBets(r, contB.name); } catch (e) {
+        log("ERROR", "betting", `Failed to resolve bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
     } else {
-      resolveBets(r, null); // tie — refund
+      try { resolveBets(r, null); } catch (e) {
+        log("ERROR", "betting", `Failed to refund bets for round ${r}`, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
     rerender();
 

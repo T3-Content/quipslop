@@ -216,7 +216,7 @@ function BettingPanel({
           .catch(() => {});
       }
     }
-  }, [round.num, userId]);
+  }, [round.num, userId, onBalanceChange]);
 
   const isOpen = betState?.open && round.num === betState.roundNum;
   const [contA, contB] = round.contestants;
@@ -764,9 +764,7 @@ function App() {
     setShowNicknameModal(false);
   };
 
-  // Determine if betting panel should show
   const bettingRound = state.active;
-  const canBet = userId && bettingRound && (bettingRound.phase === "prompting" || bettingRound.phase === "answering");
 
   return (
     <div className="app">

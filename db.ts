@@ -4,6 +4,8 @@ import type { RoundState } from "./game.ts";
 const dbPath = process.env.DATABASE_PATH ?? "quipslop.sqlite";
 export const db = new Database(dbPath, { create: true });
 
+db.exec("PRAGMA foreign_keys = ON;");
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +58,7 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS bets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
     round_num INTEGER NOT NULL,
     contestant TEXT NOT NULL,
     amount INTEGER NOT NULL,
@@ -80,23 +82,35 @@ export function getUser(id: string) {
 }
 
 export function placeBet(userId: string, roundNum: number, contestant: string, amount: number) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+
   const user = getUser(userId);
   if (!user) throw new Error("User not found");
-  if (amount <= 0) throw new Error("Amount must be positive");
   if (amount > user.balance) throw new Error("Insufficient balance");
-
-  const existing = db.query("SELECT id FROM bets WHERE user_id = $userId AND round_num = $roundNum").get({ $userId: userId, $roundNum: roundNum });
-  if (existing) throw new Error("Already bet this round");
 
   db.exec("BEGIN");
   try {
+    // Duplicate check inside transaction (UNIQUE constraint is also enforced)
+    const existing = db.query("SELECT id FROM bets WHERE user_id = $userId AND round_num = $roundNum").get({ $userId: userId, $roundNum: roundNum });
+    if (existing) {
+      db.exec("ROLLBACK");
+      throw new Error("Already bet this round");
+    }
+
     db.prepare("INSERT INTO bets (user_id, round_num, contestant, amount) VALUES ($userId, $roundNum, $contestant, $amount)")
       .run({ $userId: userId, $roundNum: roundNum, $contestant: contestant, $amount: amount });
-    db.prepare("UPDATE users SET balance = balance - $amount WHERE id = $userId")
+
+    // Conditional UPDATE — defensive against concurrent balance changes
+    const result = db.prepare("UPDATE users SET balance = balance - $amount WHERE id = $userId AND balance >= $amount")
       .run({ $amount: amount, $userId: userId });
+    if (result.changes === 0) {
+      db.exec("ROLLBACK");
+      throw new Error("Insufficient balance");
+    }
+
     db.exec("COMMIT");
   } catch (e) {
-    db.exec("ROLLBACK");
+    try { db.exec("ROLLBACK"); } catch {}
     throw e;
   }
 
@@ -116,8 +130,8 @@ export function resolveBets(roundNum: number, winnerName: string | null) {
   try {
     for (const bet of bets) {
       if (winnerName === null) {
-        // Tie — refund
-        db.prepare("UPDATE bets SET won = 0, payout = $amount WHERE id = $id")
+        // Tie — refund (won = -1 distinguishes from loss)
+        db.prepare("UPDATE bets SET won = -1, payout = $amount WHERE id = $id")
           .run({ $amount: bet.amount, $id: bet.id });
         db.prepare("UPDATE users SET balance = balance + $amount WHERE id = $userId")
           .run({ $amount: bet.amount, $userId: bet.user_id });
