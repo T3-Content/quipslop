@@ -865,4 +865,14 @@ export const ALL_PROMPTS = [
   "A good name for a mint for your butt",
   "A rejected Jelly Belly flavor",
   "The worst catchphrase for a Star Trek captain",
+
+  // ── Community Prompts ─────────────────────────────────────────────────────
+  "Come up with the rejected third option for \"fight or flight\"",
+  "The most suspicious thing to whisper during a hug",
+  "A concerning hobby for a dentist to have",
+  "What the dog actually saw",
+  "A sign that your surgeon is winging it",
+  "A museum exhibit that got removed after one day",
+  "A terrible thing to yell during a moment of silence",
+  "What your sleep paralysis demon is actually thinking",
 ] as const;
