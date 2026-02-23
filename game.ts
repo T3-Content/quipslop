@@ -273,6 +273,7 @@ export async function runGame(
   state: GameState,
   rerender: () => void,
   onViewerVotingStart?: () => void,
+  hasViewers?: () => boolean,
 ) {
   let startRound = 1;
   const lastCompletedRound = state.completed.at(-1);
@@ -285,6 +286,9 @@ export async function runGame(
   for (let r = startRound; r <= endRound; r++) {
     while (state.isPaused) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    while (hasViewers && !hasViewers()) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     const roundGeneration = state.generation;
 

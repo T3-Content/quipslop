@@ -859,6 +859,6 @@ log("INFO", "server", `Web server started on port ${server.port}`, {
 
 runGame(runs, gameState, broadcast, () => {
   viewerVoters.clear();
-}).then(() => {
+}, () => clients.size > 0).then(() => {
   console.log(`\n✅ Game complete! Log: ${LOG_FILE}`);
 });
