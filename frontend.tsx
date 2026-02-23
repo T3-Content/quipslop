@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "./frontend.css";
+import type { StreakMap } from "./streaks.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: StreakMap;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -301,7 +303,11 @@ function Arena({ round, total }: { round: RoundState; total: number | null }) {
 
 // ── Game Over ────────────────────────────────────────────────────────────────
 
-function GameOver({ scores }: { scores: Record<string, number> }) {
+function GameOver({
+  scores,
+}: {
+  scores: Record<string, number>;
+}) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const champion = sorted[0];
 
@@ -329,9 +335,11 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 function Standings({
   scores,
+  streaks,
   activeRound,
 }: {
   scores: Record<string, number>;
+  streaks: StreakMap;
   activeRound: RoundState | null;
 }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -365,6 +373,7 @@ function Standings({
           const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
           const color = getColor(name);
           const active = competing.has(name);
+          const streak = streaks[name] ?? { current: 0 };
           return (
             <div
               key={name}
@@ -374,6 +383,11 @@ function Standings({
                 {i === 0 && score > 0 ? "👑" : i + 1}
               </span>
               <ModelTag model={{ id: name, name }} small />
+              {streak.current >= 2 && (
+                <span className="standing__heat" title={`Win streak ${streak.current}`}>
+                  🔥 {streak.current}
+                </span>
+              )}
               <div className="standing__bar">
                 <div
                   className="standing__fill"
@@ -501,7 +515,11 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} activeRound={state.active} />
+        <Standings
+          scores={state.scores}
+          streaks={state.streaks}
+          activeRound={state.active}
+        />
       </div>
     </div>
   );

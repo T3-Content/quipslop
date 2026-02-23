@@ -13,6 +13,10 @@ import {
   type GameState,
   type RoundState,
 } from "./game.ts";
+import {
+  computeStreaks,
+  createEmptyStreaks,
+} from "./streaks.ts";
 
 const VERSION = crypto.randomUUID().slice(0, 8);
 
@@ -29,7 +33,9 @@ if (!process.env.OPENROUTER_API_KEY) {
 }
 
 const allRounds = getAllRounds();
+const modelNames = MODELS.map((model) => model.name);
 const initialScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+const initialStreaks = computeStreaks(modelNames, allRounds);
 
 let initialCompleted: RoundState[] = [];
 if (allRounds.length > 0) {
@@ -54,6 +60,7 @@ const gameState: GameState = {
   completed: initialCompleted,
   active: null,
   scores: initialScores,
+  streaks: initialStreaks,
   done: false,
   isPaused: false,
   generation: 0,
@@ -434,6 +441,7 @@ const server = Bun.serve<WsData>({
       gameState.completed = [];
       gameState.active = null;
       gameState.scores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+      gameState.streaks = createEmptyStreaks(modelNames);
       gameState.done = false;
       gameState.isPaused = true;
       gameState.generation += 1;
