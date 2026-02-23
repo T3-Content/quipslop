@@ -13,6 +13,22 @@ import {
   type GameState,
   type RoundState,
 } from "./game.ts";
+import {
+  startChat,
+  stopChat,
+  onChatMessage,
+  setCurrentRound,
+  getRecentMessages,
+  getChatStats,
+  getAudienceVotes,
+} from "./chat.ts";
+import {
+  queueMessage,
+  startPersistence,
+  stopPersistence,
+  getRecentChat,
+  getChatForRound,
+} from "./chat-store.ts";
 
 const VERSION = crypto.randomUUID().slice(0, 8);
 
@@ -227,11 +243,12 @@ function getClientState() {
     done: gameState.done,
     isPaused: gameState.isPaused,
     generation: gameState.generation,
+    audienceVotes: getAudienceVotes(),
   };
 }
 
 function broadcast() {
-  const msg = JSON.stringify({
+  const stateMsg = JSON.stringify({
     type: "state",
     data: getClientState(),
     totalRounds: runs,
@@ -239,8 +256,11 @@ function broadcast() {
     version: VERSION,
   });
   for (const ws of clients) {
-    ws.send(msg);
+    ws.send(stateMsg);
   }
+
+  // Keep chat in sync with active round
+  setCurrentRound(gameState.active?.num ?? null);
 }
 
 let viewerCountTimer: ReturnType<typeof setTimeout> | null = null;
@@ -533,6 +553,67 @@ const server = Bun.serve<WsData>({
       });
     }
 
+    // ── Chat endpoints ──────────────────────────────────────────────────────
+
+    if (url.pathname === "/api/chat/recent") {
+      if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const limit = Number.isFinite(rawLimit)
+        ? Math.min(Math.max(rawLimit, 1), 200)
+        : 50;
+      const messages = getRecentChat(limit);
+      return new Response(JSON.stringify({ messages }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname.startsWith("/api/chat/round/")) {
+      if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      const parts = url.pathname.split("/");
+      const roundNum = parseInt(parts[parts.length - 1] ?? "", 10);
+      if (!Number.isFinite(roundNum) || roundNum < 1) {
+        return new Response("Invalid round number", { status: 400 });
+      }
+      const messages = getChatForRound(roundNum);
+      return new Response(JSON.stringify({ roundNum, messages }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=30",
+        },
+      });
+    }
+
+    if (url.pathname === "/api/chat/votes") {
+      if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      return new Response(JSON.stringify(getAudienceVotes()), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname === "/api/chat/stats") {
+      if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
+      return new Response(JSON.stringify(getChatStats()), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     if (url.pathname === "/ws") {
       if (req.method !== "GET") {
         return new Response("Method Not Allowed", {
@@ -631,6 +712,49 @@ log("INFO", "server", `Web server started on port ${server.port}`, {
   runs,
   models: MODELS.map((m) => m.id),
 });
+
+// ── Twitch chat ─────────────────────────────────────────────────────────────
+
+let chatBroadcastTimer: ReturnType<typeof setInterval> | null = null;
+
+onChatMessage((msg) => {
+  queueMessage(msg);
+});
+
+startPersistence();
+
+startChat().then(() => {
+  // Broadcast chat stats to spectators every 3 seconds
+  chatBroadcastTimer = setInterval(() => {
+    if (clients.size === 0) return;
+    const stats = getChatStats();
+    if (stats.totalMessages === 0) return;
+    const recent = getRecentMessages(10);
+    const msg = JSON.stringify({
+      type: "chat",
+      stats,
+      recent: recent.map((m) => ({
+        username: m.displayName,
+        content: m.content,
+        badges: m.badges,
+        isMod: m.isMod,
+        isSubscriber: m.isSubscriber,
+      })),
+    });
+    for (const ws of clients) {
+      ws.send(msg);
+    }
+  }, 3_000);
+});
+
+function shutdown() {
+  if (chatBroadcastTimer) clearInterval(chatBroadcastTimer);
+  stopChat();
+  stopPersistence();
+  process.exit(0);
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 // ── Start game ──────────────────────────────────────────────────────────────
 

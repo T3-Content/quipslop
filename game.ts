@@ -184,16 +184,56 @@ export function cleanResponse(text: string): string {
 // ── AI functions ────────────────────────────────────────────────────────────
 
 import { ALL_PROMPTS } from "./prompts";
+import {
+  getRecentMessages,
+  getChatStats,
+  openAudienceVoting,
+  closeAudienceVoting,
+} from "./chat.ts";
+
+// Humor reaction patterns — when chat uses these, the previous answer landed well
+const HYPE_PATTERNS = /\b(lmao|lol|dead|omg|bruh|no way|im crying|help|based|goated)\b|[💀😂🤣]/iu;
+const CRINGE_PATTERNS = /\b(mid|boring|cringe|meh|yawn|weak|trash)\b|[😴👎]/iu;
+
+function analyzeAudienceReactions(messages: ReturnType<typeof getRecentMessages>): string {
+  let hype = 0;
+  let cringe = 0;
+  for (const msg of messages) {
+    if (HYPE_PATTERNS.test(msg.content)) hype++;
+    if (CRINGE_PATTERNS.test(msg.content)) cringe++;
+  }
+  if (hype === 0 && cringe === 0) return "";
+  if (hype > cringe * 2) return " The audience is LOVING IT — keep the energy high, go bigger.";
+  if (cringe > hype) return " The audience wants better — surprise them with something unexpected.";
+  return " The audience is engaged — match their energy.";
+}
+
+function buildAudienceContext(): string {
+  const stats = getChatStats();
+  if (stats.totalMessages === 0) return "";
+
+  const recent = getRecentMessages(12);
+  if (recent.length === 0) return "";
+
+  const chatSnippets = recent
+    .map((m) => `${m.displayName}: ${m.content}`)
+    .join("\n");
+
+  const reactionNote = analyzeAudienceReactions(recent);
+
+  return `\n\nThe live Twitch audience (${stats.uniqueChatters} chatters, ${stats.messagesPerMinute} msgs/min) is watching. Here's what they're saying:\n${chatSnippets}\n\nPlay off the audience energy! If they're hyped about something, lean into it. If they're roasting a model, get spicier.${reactionNote}`;
+}
 
 function buildPromptSystem(): string {
   const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
+  const audienceCtx = buildAudienceContext();
   return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
 
 Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
 
 ${examples.map((p) => `- ${p}`).join("\n")}
 
-Come up with something ORIGINAL — don't copy these examples.`;
+Come up with something ORIGINAL — don't copy these examples.${audienceCtx}`;
 }
 
 export async function callGeneratePrompt(model: Model): Promise<string> {
@@ -217,13 +257,15 @@ export async function callGenerateAnswer(
   model: Model,
   prompt: string,
 ): Promise<string> {
+  const audienceCtx = buildAudienceContext();
   log("INFO", `answer:${model.name}`, "Calling API", {
     modelId: model.id,
     prompt,
+    hasAudience: audienceCtx.length > 0,
   });
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(model.id),
-    system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
+    system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.${audienceCtx}`,
     prompt: `Fill in the blank: ${prompt}`,
   });
 
@@ -248,7 +290,7 @@ export async function callVote(
   });
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(voter.id),
-    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
+    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else. Judge based on humor, creativity, and unexpectedness.`,
     prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
   });
 
@@ -393,6 +435,9 @@ export async function runGame(
     const answerB = round.answerTasks[1].result!;
     const voteStart = Date.now();
     round.votes = voters.map((v) => ({ voter: v, startedAt: voteStart }));
+
+    // Open audience voting — viewers type A or B in Twitch chat
+    openAudienceVoting();
     rerender();
 
     await Promise.all(
@@ -442,18 +487,35 @@ export async function runGame(
     }
 
     // ── Score ──
+    const audienceResult = closeAudienceVoting();
     let votesA = 0;
     let votesB = 0;
     for (const v of round.votes) {
       if (v.votedFor === contA) votesA++;
       else if (v.votedFor === contB) votesB++;
     }
-    round.scoreA = votesA * 100;
-    round.scoreB = votesB * 100;
+
+    // Audience votes count as bonus points (10 per audience vote)
+    // This makes chat participation meaningful without overriding AI judges
+    const audienceBonusA = audienceResult.a * 10;
+    const audienceBonusB = audienceResult.b * 10;
+    round.scoreA = votesA * 100 + audienceBonusA;
+    round.scoreB = votesB * 100 + audienceBonusB;
+
+    if (audienceResult.a + audienceResult.b > 0) {
+      log("INFO", "round", `Audience votes: A=${audienceResult.a} B=${audienceResult.b}`, {
+        roundNum: r,
+        audienceA: audienceResult.a,
+        audienceB: audienceResult.b,
+        bonusA: audienceBonusA,
+        bonusB: audienceBonusB,
+      });
+    }
     round.phase = "done";
-    if (votesA > votesB) {
+    // Winner determined by total score (AI votes + audience bonus)
+    if (round.scoreA > round.scoreB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
-    } else if (votesB > votesA) {
+    } else if (round.scoreB > round.scoreA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
     }
     rerender();
