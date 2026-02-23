@@ -1,15 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { render, Box, Text, Static, useApp } from "ink";
+import { render, Box, Text, Static } from "ink";
 import {
   MODELS,
   MODEL_COLORS,
   NAME_PAD,
   LOG_FILE,
-  log,
   runGame,
   type Model,
-  type TaskInfo,
-  type VoteInfo,
   type RoundState,
   type GameState,
 } from "./game.ts";
@@ -266,15 +263,6 @@ const runsArg = process.argv.find((a) => a.startsWith("runs="));
 const runsVal = runsArg ? runsArg.split("=")[1] : "infinite";
 const runs =
   runsVal === "infinite" ? Infinity : parseInt(runsVal || "infinite", 10);
-
-if (!process.env.OPENROUTER_API_KEY) {
-  console.error("Error: Set OPENROUTER_API_KEY environment variable");
-  process.exit(1);
-}
-
-log("INFO", "startup", `Game starting: ${runs} rounds`, {
-  models: MODELS.map((m) => m.id),
-});
 
 console.log(
   `\n\x1b[1m\x1b[45m\x1b[30m quipslop \x1b[0m \x1b[2m${runs} rounds\x1b[0m`,

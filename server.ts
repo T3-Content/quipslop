@@ -8,7 +8,6 @@ import { clearAllRounds, getRounds, getAllRounds } from "./db.ts";
 import {
   MODELS,
   LOG_FILE,
-  log,
   runGame,
   type GameState,
   type RoundState,
@@ -103,7 +102,9 @@ const MAX_HISTORY_CACHE_KEYS = parsePositiveInt(
 );
 const FOSSABOT_CHANNEL_LOGIN = (
   process.env.FOSSABOT_CHANNEL_LOGIN ?? "quipslop"
-).trim().toLowerCase();
+)
+  .trim()
+  .toLowerCase();
 const FOSSABOT_VOTE_SECRET = process.env.FOSSABOT_VOTE_SECRET ?? "";
 const FOSSABOT_VALIDATE_TIMEOUT_MS = parsePositiveInt(
   process.env.FOSSABOT_VALIDATE_TIMEOUT_MS,
@@ -304,9 +305,9 @@ async function validateFossabotRequest(validateUrl: string): Promise<boolean> {
     });
     if (!res.ok) return false;
 
-    const body = (await res.json().catch(() => null)) as
-      | { context_url?: unknown }
-      | null;
+    const body = (await res.json().catch(() => null)) as {
+      context_url?: unknown;
+    } | null;
     return Boolean(body && typeof body.context_url === "string");
   } catch {
     return false;
@@ -453,7 +454,10 @@ const server = Bun.serve<WsData>({
       }
 
       const providedSecret = url.searchParams.get("secret") ?? "";
-      if (!providedSecret || !secureCompare(providedSecret, FOSSABOT_VOTE_SECRET)) {
+      if (
+        !providedSecret ||
+        !secureCompare(providedSecret, FOSSABOT_VOTE_SECRET)
+      ) {
         log("WARN", "vote:fossabot", "Rejected due to missing/invalid secret", {
           ip,
         });
@@ -468,12 +472,20 @@ const server = Bun.serve<WsData>({
         .get("x-fossabot-channellogin")
         ?.trim()
         .toLowerCase();
-      if (channelProvider !== "twitch" || channelLogin !== FOSSABOT_CHANNEL_LOGIN) {
-        log("WARN", "vote:fossabot", "Rejected due to channel/provider mismatch", {
-          ip,
-          channelProvider,
-          channelLogin,
-        });
+      if (
+        channelProvider !== "twitch" ||
+        channelLogin !== FOSSABOT_CHANNEL_LOGIN
+      ) {
+        log(
+          "WARN",
+          "vote:fossabot",
+          "Rejected due to channel/provider mismatch",
+          {
+            ip,
+            channelProvider,
+            channelLogin,
+          },
+        );
         return new Response("", { status: 403 });
       }
 
@@ -647,7 +659,9 @@ const server = Bun.serve<WsData>({
       gameState.completed = [];
       gameState.active = null;
       gameState.scores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
-      gameState.viewerScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+      gameState.viewerScores = Object.fromEntries(
+        MODELS.map((m) => [m.name, 0]),
+      );
       gameState.done = false;
       gameState.isPaused = true;
       gameState.generation += 1;
