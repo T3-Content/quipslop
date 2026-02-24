@@ -7,9 +7,12 @@ import { join } from "node:path";
 
 export const MODELS = [
   { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+  { id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash" },
+  { id: "meta-llama/llama-4-maverick", name: "Llama 4 Maverick" },
+  { id: "qwen/qwen3.5-plus-02-15", name: "Qwen 3.5 Plus" },
   { id: "moonshotai/kimi-k2", name: "Kimi K2" },
   // { id: "moonshotai/kimi-k2.5", name: "Kimi K2.5" },
-  { id: "deepseek/deepseek-v3.2", name: "DeepSeek 3.2" },
+  // { id: "deepseek/deepseek-v3.2", name: "DeepSeek 3.2" },
   // { id: "z-ai/glm-5", name: "GLM-5" },
   { id: "openai/gpt-5.2", name: "GPT-5.2" },
   { id: "anthropic/claude-opus-4.6", name: "Opus 4.6" },
@@ -22,9 +25,11 @@ export type Model = (typeof MODELS)[number];
 
 export const MODEL_COLORS: Record<string, string> = {
   "Gemini 3.1 Pro": "cyan",
+  "Gemini 3 Flash": "blueBright",
+  "Llama 4 Maverick": "yellowBright",
+  "Qwen 3.5 Plus": "redBright",
   "Kimi K2": "green",
   "Kimi K2.5": "magenta",
-  "DeepSeek 3.2": "greenBright",
   "GLM-5": "cyanBright",
   "GPT-5.2": "yellow",
   "Opus 4.6": "blue",
