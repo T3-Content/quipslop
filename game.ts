@@ -25,9 +25,11 @@ export type Model = (typeof MODELS)[number];
 
 export const MODEL_COLORS: Record<string, string> = {
   "Gemini 3.1 Pro": "cyan",
+  "Gemini 3 Flash": "blueBright",
+  "Llama 4 Maverick": "yellowBright",
+  "Qwen 3.5 Plus": "redBright",
   "Kimi K2": "green",
   "Kimi K2.5": "magenta",
-  "DeepSeek 3.2": "greenBright",
   "GLM-5": "cyanBright",
   "GPT-5.2": "yellow",
   "Opus 4.6": "blue",
