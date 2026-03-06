@@ -455,6 +455,9 @@ function Standings({
           <a href="/history" className="standings__link">
             History
           </a>
+          <a href="/bench" className="standings__link">
+            Bench
+          </a>
           <a href="https://twitch.tv/quipslop" target="_blank" rel="noopener noreferrer" className="standings__link">
             Twitch
           </a>
