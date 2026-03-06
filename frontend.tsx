@@ -38,6 +38,7 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   viewerScores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
@@ -159,6 +160,7 @@ function ContestantCard({
   isWinner,
   showVotes,
   voters,
+  streak,
   viewerVotes,
   totalViewerVotes,
 }: {
@@ -168,6 +170,7 @@ function ContestantCard({
   isWinner: boolean;
   showVotes: boolean;
   voters: VoteInfo[];
+  streak: number;
   viewerVotes?: number;
   totalViewerVotes?: number;
 }) {
@@ -185,6 +188,11 @@ function ContestantCard({
     >
       <div className="contestant__head">
         <ModelTag model={task.model} />
+        {streak >= 2 && (
+          <span className="streak-badge" title={`${streak} win streak`}>
+            🔥 {streak}
+          </span>
+        )}
         {isWinner && <span className="win-tag">WIN</span>}
       </div>
 
@@ -269,10 +277,12 @@ function ContestantCard({
 function Arena({
   round,
   total,
+  streaks,
   viewerVotingSecondsLeft,
 }: {
   round: RoundState;
   total: number | null;
+  streaks: Record<string, number>;
   viewerVotingSecondsLeft: number;
 }) {
   const [contA, contB] = round.contestants;
@@ -332,6 +342,7 @@ function Arena({
             isWinner={isDone && votesA > votesB}
             showVotes={showVotes}
             voters={votersA}
+            streak={streaks[contA.name] || 0}
             viewerVotes={round.viewerVotesA}
             totalViewerVotes={totalViewerVotes}
           />
@@ -342,6 +353,7 @@ function Arena({
             isWinner={isDone && votesB > votesA}
             showVotes={showVotes}
             voters={votersB}
+            streak={streaks[contB.name] || 0}
             viewerVotes={round.viewerVotesB}
             totalViewerVotes={totalViewerVotes}
           />
@@ -386,10 +398,12 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 function LeaderboardSection({
   label,
   scores,
+  streaks,
   competing,
 }: {
   label: string;
   scores: Record<string, number>;
+  streaks?: Record<string, number>;
   competing: Set<string>;
 }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -415,6 +429,9 @@ function LeaderboardSection({
                   {i === 0 && score > 0 ? "👑" : i + 1}
                 </span>
                 <ModelTag model={{ id: name, name }} small />
+                {(streaks?.[name] || 0) >= 2 && (
+                  <span className="streak-badge">🔥{streaks![name]}</span>
+                )}
                 <span className="lb-entry__score">{score}</span>
               </div>
               <div className="lb-entry__bar">
@@ -434,10 +451,12 @@ function LeaderboardSection({
 function Standings({
   scores,
   viewerScores,
+  streaks,
   activeRound,
 }: {
   scores: Record<string, number>;
   viewerScores: Record<string, number>;
+  streaks: Record<string, number>;
   activeRound: RoundState | null;
 }) {
   const competing = activeRound
@@ -466,6 +485,7 @@ function Standings({
       <LeaderboardSection
         label="AI Judges"
         scores={scores}
+        streaks={streaks}
         competing={competing}
       />
       <LeaderboardSection
@@ -593,6 +613,7 @@ function App() {
             <Arena
               round={displayRound}
               total={totalRounds}
+              streaks={state.streaks}
               viewerVotingSecondsLeft={viewerVotingSecondsLeft}
             />
           ) : (
@@ -611,7 +632,7 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} viewerScores={state.viewerScores ?? {}} activeRound={state.active} />
+        <Standings scores={state.scores} viewerScores={state.viewerScores ?? {}} streaks={state.streaks ?? {}} activeRound={state.active} />
       </div>
     </div>
   );

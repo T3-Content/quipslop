@@ -73,6 +73,7 @@ export type GameState = {
   completed: RoundState[];
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   viewerScores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
@@ -469,8 +470,15 @@ export async function runGame(
     round.phase = "done";
     if (votesA > votesB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
+      state.streaks[contA.name] = (state.streaks[contA.name] || 0) + 1;
+      state.streaks[contB.name] = 0;
     } else if (votesB > votesA) {
       state.scores[contB.name] = (state.scores[contB.name] || 0) + 1;
+      state.streaks[contB.name] = (state.streaks[contB.name] || 0) + 1;
+      state.streaks[contA.name] = 0;
+    } else {
+      state.streaks[contA.name] = 0;
+      state.streaks[contB.name] = 0;
     }
     // Viewer vote scoring
     const vvA = round.viewerVotesA ?? 0;

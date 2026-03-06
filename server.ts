@@ -30,18 +30,26 @@ if (!process.env.OPENROUTER_API_KEY) {
 
 const allRounds = getAllRounds();
 const initialScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+const initialStreaks: Record<string, number> = {};
 const initialViewerScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
 
 let initialCompleted: RoundState[] = [];
 if (allRounds.length > 0) {
   for (const round of allRounds) {
     if (round.scoreA !== undefined && round.scoreB !== undefined) {
+      const contAName = round.contestants[0].name;
+      const contBName = round.contestants[1].name;
       if (round.scoreA > round.scoreB) {
-        initialScores[round.contestants[0].name] =
-          (initialScores[round.contestants[0].name] || 0) + 1;
+        initialScores[contAName] = (initialScores[contAName] || 0) + 1;
+        initialStreaks[contAName] = (initialStreaks[contAName] || 0) + 1;
+        initialStreaks[contBName] = 0;
       } else if (round.scoreB > round.scoreA) {
-        initialScores[round.contestants[1].name] =
-          (initialScores[round.contestants[1].name] || 0) + 1;
+        initialScores[contBName] = (initialScores[contBName] || 0) + 1;
+        initialStreaks[contBName] = (initialStreaks[contBName] || 0) + 1;
+        initialStreaks[contAName] = 0;
+      } else {
+        initialStreaks[contAName] = 0;
+        initialStreaks[contBName] = 0;
       }
     }
     const vvA = round.viewerVotesA ?? 0;
@@ -64,6 +72,7 @@ const gameState: GameState = {
   completed: initialCompleted,
   active: null,
   scores: initialScores,
+  streaks: initialStreaks,
   viewerScores: initialViewerScores,
   done: false,
   isPaused: false,
@@ -431,6 +440,7 @@ function getClientState() {
     active: gameState.active,
     lastCompleted: gameState.completed.at(-1) ?? null,
     scores: gameState.scores,
+    streaks: gameState.streaks,
     viewerScores: gameState.viewerScores,
     done: gameState.done,
     isPaused: gameState.isPaused,
@@ -718,6 +728,7 @@ const server = Bun.serve<WsData>({
       gameState.completed = [];
       gameState.active = null;
       gameState.scores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+      gameState.streaks = {};
       gameState.viewerScores = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
       gameState.done = false;
       gameState.isPaused = true;

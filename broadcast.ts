@@ -32,6 +32,7 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  streaks: Record<string, number>;
   viewerScores: Record<string, number>;
   done: boolean;
   isPaused: boolean;
@@ -300,6 +301,7 @@ function drawScoreboardSection(
   label: string,
   startY: number,
   entryHeight: number,
+  streaks?: Record<string, number>,
 ) {
   const maxScore = entries[0]?.[1] || 1;
 
@@ -343,10 +345,19 @@ function drawScoreboardSection(
     const scoreText = String(score);
     const scoreWidth = ctx.measureText(scoreText).width;
     ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 18);
+
+    const streak = streaks?.[name] || 0;
+    if (streak >= 2) {
+      ctx.font = '600 14px "Inter", sans-serif';
+      ctx.fillStyle = "#f59e0b";
+      const streakText = `🔥${streak}`;
+      const streakWidth = ctx.measureText(streakText).width;
+      ctx.fillText(streakText, WIDTH - 48 - scoreWidth - streakWidth - 8, y + 18);
+    }
   });
 }
 
-function drawScoreboard(scores: Record<string, number>, viewerScores: Record<string, number>) {
+function drawScoreboard(scores: Record<string, number>, viewerScores: Record<string, number>, streaks: Record<string, number>) {
   const modelEntries = Object.entries(scores).sort((a, b) => b[1] - a[1]) as [string, number][];
   const viewerEntries = Object.entries(viewerScores).sort((a, b) => b[1] - a[1]) as [string, number][];
 
@@ -359,7 +370,7 @@ function drawScoreboard(scores: Record<string, number>, viewerScores: Record<str
   ctx.fillText("STANDINGS", WIDTH - 348, 76);
 
   const entryHeight = 52;
-  drawScoreboardSection(modelEntries, "AI JUDGES", 110, entryHeight);
+  drawScoreboardSection(modelEntries, "AI JUDGES", 110, entryHeight, streaks);
 
   const viewerStartY = 110 + 28 + modelEntries.length * entryHeight + 16;
   drawScoreboardSection(viewerEntries, "VIEWERS", viewerStartY, entryHeight);
@@ -632,7 +643,7 @@ function draw() {
       return;
   }
 
-  drawScoreboard(state.scores, state.viewerScores ?? {});
+  drawScoreboard(state.scores, state.viewerScores ?? {}, state.streaks ?? {});
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);

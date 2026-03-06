@@ -233,6 +233,15 @@ body {
   flex-shrink: 0;
 }
 
+.streak-badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  color: #f59e0b;
+  margin-left: auto;
+}
+
 .win-tag {
   font-family: var(--mono);
   font-size: 10px;
