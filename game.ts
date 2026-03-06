@@ -85,7 +85,16 @@ const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
   extraBody: {
     reasoning: {
-      effort: "medium",
+      effort: "high",
+    },
+  },
+});
+
+const openrouterJudge = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  extraBody: {
+    reasoning: {
+      effort: "low",
     },
   },
 });
@@ -208,6 +217,7 @@ export async function callGeneratePrompt(model: Model): Promise<string> {
     system,
     prompt:
       "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+    temperature: 1.2,
   });
 
   log("INFO", `prompt:${model.name}`, "Raw response", {
@@ -229,6 +239,7 @@ export async function callGenerateAnswer(
     model: openrouter.chat(model.id),
     system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
     prompt: `Fill in the blank: ${prompt}`,
+    temperature: 1.3,
   });
 
   log("INFO", `answer:${model.name}`, "Raw response", {
@@ -251,7 +262,8 @@ export async function callVote(
     answerB: b.answer,
   });
   const { text, usage, reasoning } = await generateText({
-    model: openrouter.chat(voter.id),
+    model: openrouterJudge.chat(voter.id),
+    temperature: 0.3,
     system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
     prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
   });
