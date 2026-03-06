@@ -13,6 +13,11 @@ import {
   type GameState,
   type RoundState,
 } from "./game.ts";
+import {
+  isVpnOrInternalIp,
+  VpnAwareRateLimiter,
+  checkVpnRateLimit,
+} from "./ratelimit.ts";
 
 const VERSION = crypto.randomUUID().slice(0, 8);
 
@@ -129,6 +134,14 @@ const wsByIp = new Map<string, number>();
 const historyCache = new Map<string, { body: string; expiresAt: number }>();
 let lastRateWindowSweep = 0;
 let lastHistoryCacheSweep = 0;
+
+// VPN-aware rate limiter for stricter limits on VPN/internal IPs
+const vpnRateLimiter = new VpnAwareRateLimiter({
+  vpnWindowMs: parsePositiveInt(process.env.VPN_RATELIMIT_WINDOW_MS, 60_000),
+  vpnMaxRequests: parsePositiveInt(process.env.VPN_RATELIMIT_MAX_REQ, 10),
+  standardWindowMs: WINDOW_MS,
+  standardMaxRequests: HISTORY_LIMIT_PER_MIN,
+});
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
@@ -492,6 +505,15 @@ const server = Bun.serve<WsData>({
   async fetch(req, server) {
     const url = new URL(req.url);
     const ip = getClientIp(req, server);
+
+    // Check VPN/internal IP rate limiting (very strict limits for VPN/subnet IPs)
+    // Skip health check endpoint from VPN rate limiting
+    if (url.pathname !== "/healthz") {
+      const vpnRateLimitResponse = checkVpnRateLimit(ip, vpnRateLimiter, log);
+      if (vpnRateLimitResponse) {
+        return vpnRateLimitResponse;
+      }
+    }
 
     if (url.pathname.startsWith("/assets/")) {
       const path = `./public${url.pathname}`;
