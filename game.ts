@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { extractJSON } from "./llm-json-fixer";
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,9 @@ const openrouter = createOpenRouter({
     },
   },
 });
+
+const EXPERIMENTAL_VERBAL_SAMPLE_COT =
+  process.env.EXPERIMENTAL_VERBAL_SAMPLE_COT === "1";
 
 // ── Logger ──────────────────────────────────────────────────────────────────
 
@@ -200,20 +204,144 @@ ${examples.map((p) => `- ${p}`).join("\n")}
 Come up with something ORIGINAL — don't copy these examples.`;
 }
 
+function buildVerbalSampleCotSystem(): string {
+  const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
+  return `You are a comedy writer for the game Quiplash. Generate 5 funny fill-in-the-blank prompts that players will try to answer.
+
+Think in a verbal, observational stand-up style and explain your thought process.
+
+Output ONLY a single valid JSON object in this exact shape:
+{
+  "reasoning": "string",
+  "jokes": [
+    { "joke": "string", "probability": 0.0 }
+  ]
+}
+
+Rules:
+- "reasoning" must be a single string with your step-by-step verbal creative process.
+- "jokes" must contain exactly 5 items.
+- Each "joke" must be a single Quiplash-style fill-in-the-blank prompt under 15 words.
+- Each "probability" must be a number between 0 and 1.
+- Be highly varied in prompt formats. Do NOT overuse "The worst thing to..."
+- Be original and do not copy examples.
+
+Style examples:
+${examples.map((p) => `- ${p}`).join("\n")}`;
+}
+
 export async function callGeneratePrompt(model: Model): Promise<string> {
   log("INFO", `prompt:${model.name}`, "Calling API", { modelId: model.id });
-  const system = buildPromptSystem();
-  const { text, usage, reasoning } = await generateText({
+  if (!EXPERIMENTAL_VERBAL_SAMPLE_COT) {
+    const system = buildPromptSystem();
+    const { text, usage, reasoning } = await generateText({
+      model: openrouter.chat(model.id),
+      system,
+      prompt:
+        "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+    });
+
+    log("INFO", `prompt:${model.name}`, "Raw response", {
+      rawText: text,
+      usage,
+    });
+    return cleanResponse(text);
+  }
+
+  const system = buildVerbalSampleCotSystem();
+  const { text, usage } = await generateText({
     model: openrouter.chat(model.id),
     system,
-    prompt:
-      "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+    prompt: "Generate 5 original Quiplash prompts and return only the JSON object.",
   });
 
-  log("INFO", `prompt:${model.name}`, "Raw response", {
+  log("INFO", `prompt:${model.name}`, "Raw verbal sample CoT response", {
     rawText: text,
     usage,
   });
+
+  const parsed = extractJSON(text) as {
+    reasoning?: unknown;
+    jokes?: unknown;
+  };
+
+  if (!Array.isArray(parsed.jokes) || parsed.jokes.length !== 5) {
+    throw new Error("Invalid verbal sample CoT output: jokes must contain 5 items");
+  }
+
+  const candidates = parsed.jokes
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const jokeValue = (item as { joke?: unknown }).joke;
+      const probValue = (item as { probability?: unknown }).probability;
+      if (typeof jokeValue !== "string") {
+        return null;
+      }
+      const joke = cleanResponse(jokeValue);
+      if (!joke) {
+        return null;
+      }
+      const probability =
+        typeof probValue === "number" && Number.isFinite(probValue)
+          ? Math.max(0, Math.min(1, probValue))
+          : 0;
+      return { joke, probability };
+    })
+    .filter((item): item is { joke: string; probability: number } => item !== null);
+
+  if (!candidates.length) {
+    throw new Error("Invalid verbal sample CoT output: no valid joke candidates");
+  }
+
+  const selected = await callSelectBestPrompt(
+    model,
+    candidates.map((c) => c.joke),
+  );
+
+  const matched = candidates.find((c) => c.joke === selected);
+  if (matched) {
+    return matched.joke;
+  }
+
+  const fallback = candidates.reduce((best, current) => {
+    if (!best || current.probability > best.probability) {
+      return current;
+    }
+    return best;
+  }, null as { joke: string; probability: number } | null);
+
+  if (!fallback) {
+    throw new Error("Failed to select prompt from verbal sample CoT candidates");
+  }
+
+  return fallback.joke;
+}
+
+export async function callSelectBestPrompt(
+  model: Model,
+  jokes: string[],
+): Promise<string> {
+  log("INFO", `prompt-select:${model.name}`, "Calling API", {
+    modelId: model.id,
+    candidateCount: jokes.length,
+  });
+
+  const { text, usage } = await generateText({
+    model: openrouter.chat(model.id),
+    system:
+      "Step into the mind of a world-class stand-up comic about to headline a sold-out arena. Trust only your battle-tested instinct for what makes real humans explode with laughter. Choose and deliver the one joke you know, from years of reading crowds, will absolutely destroy the room.",
+    prompt: `Choose exactly one of these Quiplash prompts and reply with ONLY the exact prompt text, nothing else:\n\n${jokes
+      .map((joke, i) => `${i + 1}. ${joke}`)
+      .join("\n")}`,
+  });
+
+  log("INFO", `prompt-select:${model.name}`, "Raw response", {
+    rawText: text,
+    usage,
+  });
+
   return cleanResponse(text);
 }
 
