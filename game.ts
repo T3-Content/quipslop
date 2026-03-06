@@ -188,26 +188,65 @@ export function cleanResponse(text: string): string {
 // ── AI functions ────────────────────────────────────────────────────────────
 
 import { ALL_PROMPTS } from "./prompts";
+import { getRecentPrompts } from "./db";
 
-function buildPromptSystem(): string {
+const PROMPT_STYLES = [
+  "a fill-in-the-blank where the blank is a person, place, or thing",
+  "a question starting with 'What would...'",
+  "a question starting with 'Why does...' or 'Why is...'",
+  "a prompt about a hypothetical absurd scenario",
+  "a prompt about an embarrassing secret",
+  "a prompt that asks for a name (band name, movie title, product name, etc.)",
+  "a prompt about something you'd find in an unexpected place",
+  "a prompt about a fake quote or slogan",
+  "a prompt about a weird holiday or celebration",
+  "a question about what two things should never be combined",
+  "a prompt about what aliens would think of humans",
+  "a prompt about a terrible superpower",
+  "a prompt about something a robot would say",
+  "a prompt that starts with 'The secret ingredient in...'",
+  "a prompt about what you'd do with a time machine",
+  "a prompt about a dating profile for a fictional character",
+  "a prompt about the worst advice you could give",
+  "a prompt about a new Olympic sport",
+  "a prompt about something your pet is secretly doing",
+  "a prompt that asks to complete a fake news headline",
+];
+
+function buildPromptSystem(recentPrompts: string[]): string {
   const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
-  return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
+  const style = PROMPT_STYLES[Math.floor(Math.random() * PROMPT_STYLES.length)];
+
+  let system = `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
 
 Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
 
 ${examples.map((p) => `- ${p}`).join("\n")}
 
 Come up with something ORIGINAL — don't copy these examples.`;
+
+  if (recentPrompts.length > 0) {
+    system += `\n\nIMPORTANT: The following prompts were ALREADY USED in recent rounds. You MUST NOT generate anything similar to these. Avoid the same topics, structures, and patterns:
+
+${recentPrompts.map((p) => `- "${p}"`).join("\n")}
+
+Generate something COMPLETELY DIFFERENT from all of the above.`;
+  }
+
+  return system;
 }
 
 export async function callGeneratePrompt(model: Model): Promise<string> {
   log("INFO", `prompt:${model.name}`, "Calling API", { modelId: model.id });
-  const system = buildPromptSystem();
+  const recentPrompts = getRecentPrompts(30);
+  const system = buildPromptSystem(recentPrompts);
+  const style = PROMPT_STYLES[Math.floor(Math.random() * PROMPT_STYLES.length)];
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(model.id),
     system,
+    temperature: model.id.startsWith("anthropic/") ? 1.0 : 1.2,
     prompt:
-      "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+      `Generate a single original Quiplash prompt. Try this style: ${style}. Be creative, surprising, and don't repeat common patterns.`,
   });
 
   log("INFO", `prompt:${model.name}`, "Raw response", {
