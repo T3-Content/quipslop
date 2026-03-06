@@ -22,6 +22,7 @@ type VoteInfo = {
 type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  phaseChangedAt?: number;
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -97,6 +98,97 @@ function Dots() {
       <span>.</span>
     </span>
   );
+}
+
+const DONE_PHASE_DURATION_MS = 5000;
+
+function useElapsed(startTime: number | undefined) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!startTime) { setElapsed(0); return; }
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTime) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startTime]);
+  return elapsed;
+}
+
+function PhaseTimer({ round, isShowingPrevious }: { round: RoundState; isShowingPrevious: boolean }) {
+  const [progress, setProgress] = useState(0);
+  const elapsed = useElapsed(round.phaseChangedAt);
+
+  useEffect(() => {
+    if (round.phase !== "done" || !round.phaseChangedAt) {
+      setProgress(0);
+      return;
+    }
+    const startTime = round.phaseChangedAt;
+    function tick() {
+      const pct = Math.min((Date.now() - startTime) / DONE_PHASE_DURATION_MS, 1);
+      setProgress(pct);
+    }
+    tick();
+    const id = setInterval(tick, 50);
+    return () => clearInterval(id);
+  }, [round.phase, round.phaseChangedAt]);
+
+  // Showing previous round's results while next prompt loads — no rush
+  if (isShowingPrevious) {
+    return (
+      <div className="phase-timer">
+        <div className="phase-timer__bar">
+          <div className="phase-timer__fill phase-timer__fill--indeterminate" />
+        </div>
+        <span className="phase-timer__label">Next prompt loading — no rush</span>
+      </div>
+    );
+  }
+
+  // Done phase: 5-second countdown before next round
+  if (round.phase === "done" && round.phaseChangedAt) {
+    const remaining = Math.max(0, Math.ceil((DONE_PHASE_DURATION_MS - (Date.now() - round.phaseChangedAt)) / 1000));
+    return (
+      <div className="phase-timer">
+        <div className="phase-timer__bar">
+          <div
+            className="phase-timer__fill phase-timer__fill--countdown"
+            style={{ width: `${(1 - progress) * 100}%` }}
+          />
+        </div>
+        <span className="phase-timer__label">Next round in {remaining}s</span>
+      </div>
+    );
+  }
+
+  // Answering / voting: open-ended, show elapsed time
+  if (round.phase === "answering" || round.phase === "voting") {
+    const label = round.phase === "answering"
+      ? `Waiting for answers — ${elapsed}s`
+      : `Judges voting — ${elapsed}s`;
+    return (
+      <div className="phase-timer">
+        <div className="phase-timer__bar">
+          <div className="phase-timer__fill phase-timer__fill--indeterminate" />
+        </div>
+        <span className="phase-timer__label">{label}</span>
+      </div>
+    );
+  }
+
+  // Prompting (showing current round's loading state)
+  if (round.phase === "prompting") {
+    return (
+      <div className="phase-timer">
+        <div className="phase-timer__bar">
+          <div className="phase-timer__fill phase-timer__fill--indeterminate" />
+        </div>
+        <span className="phase-timer__label">Writing prompt — {elapsed}s</span>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function ModelTag({ model, small }: { model: Model; small?: boolean }) {
@@ -270,10 +362,12 @@ function Arena({
   round,
   total,
   viewerVotingSecondsLeft,
+  isShowingPrevious,
 }: {
   round: RoundState;
   total: number | null;
   viewerVotingSecondsLeft: number;
+  isShowingPrevious?: boolean;
 }) {
   const [contA, contB] = round.contestants;
   const showVotes = round.phase === "voting" || round.phase === "done";
@@ -320,6 +414,8 @@ function Arena({
           Vote in Twitch chat: <strong>1</strong> for left, <strong>2</strong> for right.
         </div>
       )}
+
+      <PhaseTimer round={round} isShowingPrevious={!!isShowingPrevious} />
 
       <PromptCard round={round} />
 
@@ -594,6 +690,7 @@ function App() {
               round={displayRound}
               total={totalRounds}
               viewerVotingSecondsLeft={viewerVotingSecondsLeft}
+              isShowingPrevious={isNextPrompting && !!state.lastCompleted}
             />
           ) : (
             <div className="waiting">

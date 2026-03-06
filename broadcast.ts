@@ -16,6 +16,7 @@ type VoteInfo = {
 type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  phaseChangedAt?: number;
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -64,6 +65,7 @@ const MODEL_COLORS: Record<string, string> = {
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
+const DONE_PHASE_DURATION_MS = 5000;
 
 const canvas = document.getElementById("broadcast-canvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("broadcast-status") as HTMLDivElement;
@@ -365,7 +367,69 @@ function drawScoreboard(scores: Record<string, number>, viewerScores: Record<str
   drawScoreboardSection(viewerEntries, "VIEWERS", viewerStartY, entryHeight);
 }
 
-function drawRound(round: RoundState) {
+function drawPhaseTimer(round: RoundState, mainW: number, isShowingPrevious: boolean) {
+  const barY = 174;
+  const barH = 3;
+  const barX = 64;
+  const labelGap = 16;
+
+  let label = "";
+  let isCountdown = false;
+  let countdownProgress = 0;
+
+  if (isShowingPrevious) {
+    label = "NEXT PROMPT LOADING";
+  } else if (round.phase === "done" && round.phaseChangedAt) {
+    const elapsed = Date.now() - round.phaseChangedAt;
+    countdownProgress = Math.min(elapsed / DONE_PHASE_DURATION_MS, 1);
+    const remaining = Math.max(0, Math.ceil((DONE_PHASE_DURATION_MS - elapsed) / 1000));
+    label = `NEXT ROUND IN ${remaining}S`;
+    isCountdown = true;
+  } else if (round.phase === "answering" || round.phase === "voting") {
+    const elapsed = round.phaseChangedAt ? Math.max(0, Math.floor((Date.now() - round.phaseChangedAt) / 1000)) : 0;
+    label = round.phase === "answering"
+      ? `WAITING FOR ANSWERS — ${elapsed}S`
+      : `JUDGES VOTING — ${elapsed}S`;
+  } else if (round.phase === "prompting") {
+    const elapsed = round.phaseChangedAt ? Math.max(0, Math.floor((Date.now() - round.phaseChangedAt) / 1000)) : 0;
+    label = `WRITING PROMPT — ${elapsed}S`;
+  } else {
+    return;
+  }
+
+  ctx.font = '700 14px "JetBrains Mono", monospace';
+  const labelW = ctx.measureText(label).width;
+  const barW = mainW - barX - labelGap - labelW - 64;
+
+  // Background
+  roundRect(barX, barY, barW, barH, 2, "#1c1c1c");
+
+  if (isCountdown) {
+    const fillW = Math.max(0, barW * (1 - countdownProgress));
+    if (fillW > 0) roundRect(barX, barY, fillW, barH, 2, "#D97757");
+  } else {
+    // Indeterminate sliding bar
+    const period = 1500;
+    const t = (Date.now() % period) / period;
+    const fillW = barW * 0.3;
+    const totalTravel = barW + fillW;
+    const offset = -fillW + totalTravel * t;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(barX, barY - 1, barW, barH + 2);
+    ctx.clip();
+    roundRect(barX + offset, barY, fillW, barH, 2, "#444");
+    ctx.restore();
+  }
+
+  // Label
+  ctx.font = '700 14px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#444";
+  ctx.fillText(label, barX + barW + labelGap, barY + 10);
+}
+
+function drawRound(round: RoundState, isShowingPrevious: boolean) {
   const mainW = WIDTH - 380;
 
   let phaseLabel =
@@ -399,6 +463,8 @@ function drawRound(round: RoundState) {
     const cdWidth = ctx.measureText(countdownText).width;
     ctx.fillText(countdownText, mainW - 64 - labelWidth - cdWidth - 12, 150);
   }
+
+  drawPhaseTimer(round, mainW, isShowingPrevious);
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
@@ -640,7 +706,7 @@ function draw() {
   if (state.done) {
     drawDone(state.scores);
   } else if (displayRound) {
-    drawRound(displayRound);
+    drawRound(displayRound, isNextPrompting && !!state.lastCompleted);
   } else {
     drawWaiting();
   }

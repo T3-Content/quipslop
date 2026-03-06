@@ -56,6 +56,7 @@ export type VoteInfo = {
 export type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  phaseChangedAt: number;
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -306,6 +307,7 @@ export async function runGame(
     const round: RoundState = {
       num: r,
       phase: "prompting",
+      phaseChangedAt: now,
       prompter,
       promptTask: { model: prompter, startedAt: now },
       contestants: [contA, contB],
@@ -353,6 +355,7 @@ export async function runGame(
 
     // ── Answer phase ──
     round.phase = "answering";
+    round.phaseChangedAt = Date.now();
     const answerStart = Date.now();
     round.answerTasks[0].startedAt = answerStart;
     round.answerTasks[1].startedAt = answerStart;
@@ -394,6 +397,7 @@ export async function runGame(
 
     // ── Vote phase ──
     round.phase = "voting";
+    round.phaseChangedAt = Date.now();
     const answerA = round.answerTasks[0].result!;
     const answerB = round.answerTasks[1].result!;
     const voteStart = Date.now();
@@ -467,6 +471,7 @@ export async function runGame(
     round.scoreA = votesA * 100;
     round.scoreB = votesB * 100;
     round.phase = "done";
+    round.phaseChangedAt = Date.now();
     if (votesA > votesB) {
       state.scores[contA.name] = (state.scores[contA.name] || 0) + 1;
     } else if (votesB > votesA) {
